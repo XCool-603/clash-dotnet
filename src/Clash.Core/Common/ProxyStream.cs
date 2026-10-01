@@ -3,6 +3,17 @@ using System.Net;
 namespace Clash.Core.Common;
 
 /// <summary>
+/// A stream whose send direction can be closed independently of its receive
+/// direction. TCP relays need this: when the client finishes sending it must
+/// signal EOF to the outbound without tearing down the response path.
+/// </summary>
+public interface IHalfCloseable
+{
+    /// <summary>Signals end-of-stream to the peer while leaving reads working.</summary>
+    void ShutdownSend();
+}
+
+/// <summary>
 /// A fully delegating <see cref="Stream"/> wrapper that carries the endpoints of
 /// the underlying transport. Adapters return one of these so the tunnel can
 /// report <c>remoteDestination</c> without knowing which protocol produced it.
@@ -26,6 +37,32 @@ public class ProxyStream : Stream
     public EndPoint? LocalEndPoint { get; }
 
     public EndPoint? RemoteEndPoint { get; }
+
+    /// <summary>
+    /// Half-closes the send direction, unwrapping any nested
+    /// <see cref="ProxyStream"/> layers to reach the transport. A no-op when no
+    /// layer supports it, in which case the caller relies on the drain timeout.
+    /// </summary>
+    public void ShutdownSend()
+    {
+        switch (_inner)
+        {
+            case IHalfCloseable halfCloseable:
+                try { halfCloseable.ShutdownSend(); } catch { /* peer already gone */ }
+                break;
+            case ProxyStream nested:
+                nested.ShutdownSend();
+                break;
+        }
+    }
+
+    /// <summary>True when some layer in this stack can half-close.</summary>
+    public bool SupportsHalfClose => _inner switch
+    {
+        IHalfCloseable => true,
+        ProxyStream nested => nested.SupportsHalfClose,
+        _ => false,
+    };
 
     /// <summary>Human readable <c>ip:port</c> of the remote peer, or null when unknown.</summary>
     public string? RemoteAddressString => RemoteEndPoint switch

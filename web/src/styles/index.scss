@@ -1,0 +1,375 @@
+/* ------------------------------------------------------------------ */
+/* Design tokens                                                       */
+/* ------------------------------------------------------------------ */
+
+:root {
+  --app-bg: #0d1117;
+  --app-surface: #161b22;
+  --app-surface-2: #1c232c;
+  --app-surface-3: #222b36;
+  --app-border: #2a323d;
+  --app-border-strong: #3a4553;
+  --app-text: #e6edf3;
+  --app-text-muted: #8b949e;
+  --app-text-faint: #6b7280;
+  --app-accent: #3b82f6;
+  --app-accent-soft: rgba(59, 130, 246, 0.14);
+  --app-success: #22c55e;
+  --app-warning: #eab308;
+  --app-orange: #f97316;
+  --app-danger: #ef4444;
+  --app-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+
+  --app-sidebar-width: 220px;
+  --app-sidebar-width-collapsed: 64px;
+  --app-header-height: 56px;
+  --app-radius: 10px;
+
+  color-scheme: dark;
+}
+
+html:not(.dark) {
+  --app-bg: #f2f4f8;
+  --app-surface: #ffffff;
+  --app-surface-2: #f7f8fa;
+  --app-surface-3: #eef1f5;
+  --app-border: #e0e4ea;
+  --app-border-strong: #cbd2dc;
+  --app-text: #1f2329;
+  --app-text-muted: #667085;
+  --app-text-faint: #98a2b3;
+  --app-accent: #2563eb;
+  --app-accent-soft: rgba(37, 99, 235, 0.1);
+  --app-shadow: 0 6px 20px rgba(16, 24, 40, 0.08);
+
+  color-scheme: light;
+}
+
+/* ------------------------------------------------------------------ */
+/* Element Plus variable overrides                                     */
+/* ------------------------------------------------------------------ */
+
+html.dark {
+  --el-bg-color: var(--app-surface);
+  --el-bg-color-page: var(--app-bg);
+  --el-bg-color-overlay: var(--app-surface-2);
+  --el-text-color-primary: var(--app-text);
+  --el-text-color-regular: var(--app-text);
+  --el-text-color-secondary: var(--app-text-muted);
+  --el-text-color-placeholder: var(--app-text-faint);
+  --el-border-color: var(--app-border);
+  --el-border-color-light: var(--app-border);
+  --el-border-color-lighter: var(--app-border);
+  --el-border-color-extra-light: var(--app-border);
+  --el-border-color-dark: var(--app-border-strong);
+  --el-border-color-darker: var(--app-border-strong);
+  --el-fill-color: var(--app-surface-2);
+  --el-fill-color-light: var(--app-surface-2);
+  --el-fill-color-lighter: var(--app-surface-2);
+  --el-fill-color-blank: var(--app-surface);
+  --el-fill-color-dark: var(--app-surface-3);
+  --el-mask-color: rgba(0, 0, 0, 0.7);
+}
+
+html:not(.dark) {
+  --el-bg-color: var(--app-surface);
+  --el-bg-color-page: var(--app-bg);
+  --el-bg-color-overlay: var(--app-surface);
+  --el-text-color-primary: var(--app-text);
+  --el-border-color: var(--app-border);
+  --el-border-color-light: var(--app-border);
+  --el-border-color-lighter: var(--app-border);
+  --el-fill-color-blank: var(--app-surface);
+}
+
+/* ------------------------------------------------------------------ */
+/* Base                                                                */
+/* ------------------------------------------------------------------ */
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--app-bg);
+  color: var(--app-text);
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue',
+    Arial, 'Noto Sans', sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+a {
+  color: var(--app-accent);
+  text-decoration: none;
+}
+
+/* Scrollbars */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--app-border-strong);
+  border-radius: 6px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--app-text-faint);
+  background-clip: content-box;
+}
+
+/* ------------------------------------------------------------------ */
+/* Utilities                                                           */
+/* ------------------------------------------------------------------ */
+
+.mono {
+  font-family: 'JetBrains Mono', 'Cascadia Mono', 'SFMono-Regular', Consolas, 'Liberation Mono',
+    Menlo, monospace;
+  font-variant-ligatures: none;
+}
+
+.text-muted {
+  color: var(--app-text-muted);
+}
+
+.text-faint {
+  color: var(--app-text-faint);
+}
+
+.text-danger {
+  color: var(--app-danger);
+}
+
+.text-success {
+  color: var(--app-success);
+}
+
+.text-accent {
+  color: var(--app-accent);
+}
+
+.nowrap {
+  white-space: nowrap;
+}
+
+.ellipsis {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+}
+
+.row-between {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.row-wrap {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.gap-4 {
+  gap: 4px;
+}
+
+.gap-8 {
+  gap: 8px;
+}
+
+.gap-12 {
+  gap: 12px;
+}
+
+.gap-16 {
+  gap: 16px;
+}
+
+.grow {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+}
+
+.mt-8 {
+  margin-top: 8px;
+}
+
+.mt-12 {
+  margin-top: 12px;
+}
+
+.mt-16 {
+  margin-top: 16px;
+}
+
+.mb-8 {
+  margin-bottom: 8px;
+}
+
+.mb-12 {
+  margin-bottom: 12px;
+}
+
+.mb-16 {
+  margin-bottom: 16px;
+}
+
+/* ------------------------------------------------------------------ */
+/* Shared surfaces                                                     */
+/* ------------------------------------------------------------------ */
+
+.app-panel {
+  background: var(--app-surface);
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius);
+}
+
+.app-panel--pad {
+  padding: 16px;
+}
+
+.app-section-title {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  margin: 0;
+}
+
+.app-page {
+  padding: 16px 20px 32px;
+  max-width: 1800px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+.app-page__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+
+.app-page__title {
+  font-size: 20px;
+  font-weight: 650;
+  margin: 0 0 2px;
+}
+
+.app-page__subtitle {
+  color: var(--app-text-muted);
+  font-size: 13px;
+  margin: 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* Element Plus density tweaks                                         */
+/* ------------------------------------------------------------------ */
+
+.el-table {
+  --el-table-border-color: var(--app-border);
+  --el-table-header-bg-color: var(--app-surface-2);
+  --el-table-row-hover-bg-color: var(--app-surface-2);
+  --el-table-bg-color: transparent;
+  --el-table-tr-bg-color: transparent;
+  font-size: 13px;
+}
+
+.el-table th.el-table__cell {
+  font-weight: 600;
+  color: var(--app-text-muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.el-table .cell {
+  word-break: break-word;
+}
+
+.el-card {
+  --el-card-bg-color: var(--app-surface);
+  --el-card-border-color: var(--app-border);
+}
+
+.el-tag {
+  font-weight: 500;
+}
+
+.el-drawer__header {
+  margin-bottom: 12px;
+  color: var(--app-text);
+  font-weight: 600;
+}
+
+.el-descriptions__label {
+  color: var(--app-text-muted);
+}
+
+.el-empty__description {
+  color: var(--app-text-muted);
+}
+
+.el-alert {
+  align-items: flex-start;
+}
+
+/* Dense form rows inside settings sections */
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px 20px;
+}
+
+.form-grid .el-form-item {
+  margin-bottom: 0;
+}
+
+.form-grid .el-form-item__label {
+  color: var(--app-text-muted);
+  font-size: 12px;
+}
+
+/* ------------------------------------------------------------------ */
+/* Transitions                                                         */
+/* ------------------------------------------------------------------ */
+
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.15s ease;
+}
+
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
+}

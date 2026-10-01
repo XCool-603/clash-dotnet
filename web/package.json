@@ -1,0 +1,32 @@
+{
+  "name": "clash-dashboard",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc -b && vite build",
+    "typecheck": "vue-tsc -b --force",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@element-plus/icons-vue": "^2.3.2",
+    "@vueuse/core": "^13.9.0",
+    "axios": "^1.13.1",
+    "echarts": "^6.0.0",
+    "element-plus": "^2.11.7",
+    "pinia": "^3.0.4",
+    "vue": "^3.5.42",
+    "vue-echarts": "^8.0.1",
+    "vue-router": "^4.6.3"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.3",
+    "@vitejs/plugin-vue": "^6.0.8",
+    "@vue/tsconfig": "^0.9.1",
+    "sass-embedded": "^1.94.1",
+    "typescript": "~5.9.3",
+    "vite": "^7.1.13",
+    "vue-tsc": "^3.1.5"
+  }
+}

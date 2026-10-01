@@ -47,8 +47,7 @@ public interface IProxy
 }
 
 /// <summary>Extra surface exposed by group adapters.</summary>
-public interface IProxyGroup : IProxy
-{
+public interface IProxyGroup : IProxy{
     /// <summary>Resolved members, in configuration order, already expanded from providers.</summary>
     IReadOnlyList<IProxy> Members { get; }
 
@@ -93,3 +92,44 @@ public sealed class ProxyNotFoundException(string name)
 /// <summary>Thrown when a group selection targets a name outside the group.</summary>
 public sealed class ProxyNotInGroupException(string proxy, string group)
     : ClashException($"proxy [{proxy}] not found in group [{group}]");
+
+/// <summary>
+/// A concrete outbound that owns a server endpoint. Relay groups need this to
+/// chain members: each hop is dialed to the <em>next</em> hop's server address.
+/// </summary>
+public interface IOutboundProxy : IProxy
+{
+    string? ServerHost { get; }
+
+    int ServerPort { get; }
+
+    /// <summary>Name of the adapter this one dials through, from <c>dialer-proxy</c>.</summary>
+    string? DialerProxy { get; }
+}
+
+/// <summary>
+/// Late-bound access to the tunnel. Adapters are constructed before the tunnel
+/// exists, so they resolve it through this indirection instead of a constructor
+/// argument.
+/// </summary>
+public interface ITunnelAccessor
+{
+    /// <summary>The live tunnel. Throws <see cref="InvalidOperationException"/> before it is attached.</summary>
+    Tunnel.ITunnel Tunnel { get; }
+
+    /// <summary>True once <see cref="Tunnel"/> can be read.</summary>
+    bool IsReady { get; }
+}
+
+/// <summary>Default <see cref="ITunnelAccessor"/>; the host assigns the tunnel once built.</summary>
+public sealed class TunnelAccessor : ITunnelAccessor
+{
+    private Tunnel.ITunnel? _tunnel;
+
+    public Tunnel.ITunnel Tunnel =>
+        Volatile.Read(ref _tunnel) ?? throw new InvalidOperationException("the tunnel is not attached yet");
+
+    public bool IsReady => Volatile.Read(ref _tunnel) is not null;
+
+    public void Attach(Tunnel.ITunnel tunnel) => Volatile.Write(ref _tunnel, tunnel);
+}
