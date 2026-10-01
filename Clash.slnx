@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Clash.Core/Clash.Core.csproj" />
+    <Project Path="src/Clash.Desktop/Clash.Desktop.csproj" />
+    <Project Path="src/Clash.Server/Clash.Server.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Clash.Tests/Clash.Tests.csproj" />
+  </Folder>
+</Solution>

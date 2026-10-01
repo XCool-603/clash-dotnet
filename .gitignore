@@ -1,0 +1,31 @@
+## .NET
+bin/
+obj/
+*.user
+*.suo
+.vs/
+artifacts/
+TestResults/
+
+## Node / Vue
+node_modules/
+web/dist/
+web/.vite/
+web/*.tsbuildinfo
+npm-debug.log*
+pnpm-debug.log*
+
+## Tauri / Rust
+desktop/target/
+desktop/src-tauri/target/
+
+## Clash runtime data
+data/
+*.mmdb
+!src/**/*.mmdb
+wintun.dll
+geodata/
+
+## OS
+Thumbs.db
+.DS_Store
