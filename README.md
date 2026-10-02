@@ -127,7 +127,7 @@ exposes no QUIC datagrams and no raw socket underneath.
 | `direct`, `reject`, `reject-drop`, `dns` | ✅ |
 | `ss` (Shadowsocks — AEAD, stream and 2022 ciphers, plugins) | ✅ |
 | `ssr` (ShadowsocksR) | ✅ |
-| `vmess` (VMess, AEAD) | ✅ interop-verified against Xray-core |
+| `vmess` (VMess, AEAD — TCP, plus UDP over the same connection when `udp: true`) | ✅ interop-verified against Xray-core (TCP); the UDP path is unit-tested only |
 | `vless` (VLESS, `flow: xtls-rprx-vision` padding) | ✅ interop-verified against Xray-core — but `REALITY` is ❌ (see below) and the vision *direct/splice* switch cannot be reproduced over `SslStream` |
 | `trojan` | ✅ interop-verified against Xray-core |
 | `http` / `https` | ✅ |

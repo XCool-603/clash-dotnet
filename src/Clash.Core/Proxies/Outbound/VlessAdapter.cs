@@ -1,5 +1,7 @@
+using System.Buffers;
 using System.Buffers.Binary;
 using System.Globalization;
+using System.Net;
 using System.Net.Security;
 using System.Security.Authentication;
 using System.Security.Cryptography;
@@ -203,6 +205,121 @@ internal sealed class VlessTcpStream : Stream, IHalfCloseable
     {
         try { await _inner.DisposeAsync().ConfigureAwait(false); } catch { /* already gone */ }
         GC.SuppressFinalize(this);
+    }
+}
+
+/// <summary>
+/// A VLESS UDP association carried over the same TCP connection as its request
+/// header — the classic "UDP over TCP" form.
+/// <para>
+/// <b>Framing.</b> The request header is the TCP one with command <c>0x02</c>
+/// (<see cref="VlessCrypto.CommandUdp"/>) and an <em>empty</em> flow, and it names
+/// the single destination the whole association talks to. Every datagram is then
+/// framed as <c>length(2, big-endian) || payload</c>, in both directions, with no
+/// per-datagram address and no other framing — the layout Xray-core's VLESS client
+/// speaks for a <c>CommandUDP</c> connection, which is the interoperability target.
+/// </para>
+/// <para>
+/// <b>One destination per connection.</b> Because the header carries the address
+/// and no frame repeats it, an association cannot be re-pointed at a second remote;
+/// the tunnel models a UDP flow the same way (see <c>UdpSession</c>, keyed by remote
+/// endpoint) and dials one of these per destination, so
+/// <see cref="SupportsMultipleDestinations"/> is false.
+/// </para>
+/// </summary>
+internal sealed class VlessPacketConnection : IPacketConnection
+{
+    /// <summary>Largest datagram the two-byte length field can describe.</summary>
+    private const int MaxDatagram = ushort.MaxValue;
+
+    private readonly ProxyStream _stream;
+    private readonly EndPoint? _remote;
+    private readonly SemaphoreSlim _sendLock = new(1, 1);
+    private int _disposed;
+
+    /// <summary>
+    /// Takes ownership of the connection the request header was written on.
+    /// <paramref name="remote"/> is the destination that header named, reported on
+    /// every receive because the frames themselves carry no address.
+    /// </summary>
+    internal VlessPacketConnection(ProxyStream stream, EndPoint? remote)
+    {
+        _stream = stream ?? throw new ArgumentNullException(nameof(stream));
+        _remote = remote;
+    }
+
+    /// <inheritdoc />
+    public bool SupportsMultipleDestinations => false;
+
+    /// <inheritdoc />
+    public EndPoint? LocalEndPoint => _stream.LocalEndPoint;
+
+    /// <inheritdoc />
+    public async ValueTask<int> SendAsync(
+        ReadOnlyMemory<byte> payload,
+        EndPoint destination,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(destination);
+        if (payload.Length > MaxDatagram)
+        {
+            throw new ClashException($"vless: a {payload.Length}-byte datagram does not fit the two-byte UDP length field");
+        }
+
+        // `destination` is deliberately unused: VLESS names the destination once, in
+        // the request header, and a frame carries nothing but a length and the
+        // payload. The tunnel dials one association per remote, so the caller's
+        // destination always matches the one this connection was opened for.
+        var frame = new byte[2 + payload.Length];
+        BinaryPrimitives.WriteUInt16BigEndian(frame, (ushort)payload.Length);
+        payload.Span.CopyTo(frame.AsSpan(2));
+
+        // The frame is one write so a datagram is never split across two length
+        // fields; the lock keeps concurrent senders from interleaving.
+        await _sendLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await _stream.WriteAsync(frame, cancellationToken).ConfigureAwait(false);
+            await _stream.FlushAsync(cancellationToken).ConfigureAwait(false);
+            return payload.Length;
+        }
+        finally
+        {
+            _sendLock.Release();
+        }
+    }
+
+    /// <inheritdoc />
+    public async ValueTask<PacketResult> ReceiveAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+    {
+        var header = new byte[2];
+        await OutboundIo.ReadExactlyAsync(_stream, header, cancellationToken).ConfigureAwait(false);
+        var length = BinaryPrimitives.ReadUInt16BigEndian(header);
+
+        // A zero-length datagram is legal on the wire and must still be reported as
+        // one packet: reading zero payload bytes here would leave the length field
+        // of the *next* frame to be mistaken for a payload, desynchronising the
+        // stream.
+        if (length == 0) return new PacketResult(0, _remote);
+
+        var rented = ArrayPool<byte>.Shared.Rent(length);
+        try
+        {
+            await OutboundIo.ReadExactlyAsync(_stream, rented.AsMemory(0, length), cancellationToken).ConfigureAwait(false);
+            return new PacketResult(OutboundIo.CopyInto(rented.AsSpan(0, length), buffer), _remote);
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(rented);
+        }
+    }
+
+    /// <inheritdoc />
+    public async ValueTask DisposeAsync()
+    {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+        _sendLock.Dispose();
+        await _stream.DisposeAsync().ConfigureAwait(false);
     }
 }
 
@@ -659,9 +776,11 @@ internal sealed class VlessVisionStream : Stream, IHalfCloseable
 /// Shadowsocks adapter does — this adapter only adds the VLESS header.
 /// </para>
 /// <para>
-/// <b>UDP</b> is not implemented: <see cref="ProxyAdapter.SupportUdp"/> stays false
-/// so the tunnel never routes a datagram at this adapter, rather than advertising a
-/// capability that would fail on use.
+/// <b>UDP</b> is carried over the same TCP connection in the classic "UDP over
+/// TCP" form: the request header switches to command <c>0x02</c> with an empty
+/// flow and every datagram is framed as <c>length(2, BE) || payload</c> (see
+/// <see cref="VlessPacketConnection"/>). XTLS Vision is TCP-only, so a configured
+/// <c>flow</c> is dropped for a UDP dial rather than applied to it.
 /// </para>
 /// </summary>
 public sealed class VlessAdapter : OutboundAdapter
@@ -669,8 +788,8 @@ public sealed class VlessAdapter : OutboundAdapter
     private readonly byte[] _uuid;
     private readonly string? _flow;
 
-    internal VlessAdapter(ProxyConfigEntry entry, AdapterBuildContext context, byte[] uuid, string? flow)
-        : base(entry, context, ProxyType.Vless, udp: false)
+    internal VlessAdapter(ProxyConfigEntry entry, AdapterBuildContext context, byte[] uuid, string? flow, bool udp)
+        : base(entry, context, ProxyType.Vless, udp)
     {
         _uuid = uuid;
         _flow = flow;
@@ -705,7 +824,7 @@ public sealed class VlessAdapter : OutboundAdapter
                 + $"'{VlessCrypto.FlowVision}', plus an empty flow for plain VLESS)");
         }
 
-        return new VlessAdapter(entry, context, VlessIds.Parse(uuid), flow);
+        return new VlessAdapter(entry, context, VlessIds.Parse(uuid), flow, entry.Map.GetBool("udp"));
     }
 
     /// <inheritdoc />
@@ -719,18 +838,67 @@ public sealed class VlessAdapter : OutboundAdapter
         var vision = _flow is not null;
         if (vision) RequireVisionConfiguration();
 
+        var stream = await OpenRequestAsync(
+            metadata,
+            upstream,
+            VlessCrypto.CommandTcp,
+            vision ? _flow : null,
+            cancellationToken).ConfigureAwait(false);
+
+        return Complete(stream);
+    }
+
+    /// <inheritdoc />
+    public override async Task<IPacketConnection> DialUdpAsync(Metadata metadata, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(metadata);
+        if (!UdpEnabled)
+        {
+            throw new NotSupportedException($"proxy [{Name}] of type [{TypeName}] has UDP disabled in its configuration");
+        }
+
+        // The flow is dropped rather than refused: XTLS Vision pads inside the outer
+        // TLS records of a TCP stream and is defined for TCP only, and the reference
+        // client sends an empty flow on a UDP connection even when the proxy entry
+        // declares one. A node that sets `flow` for its TCP traffic therefore keeps
+        // working for datagrams instead of failing the dial.
+        var stream = await OpenRequestAsync(
+            metadata,
+            upstream: null,
+            command: VlessCrypto.CommandUdp,
+            flow: null,
+            cancellationToken: cancellationToken).ConfigureAwait(false);
+
+        var connection = new VlessPacketConnection(stream, RemoteEndpoint(metadata));
+        TrackConnection(new AsyncDisposeBridge(connection));
+        return connection;
+    }
+
+    /// <summary>
+    /// Opens the transport, writes the VLESS request header for
+    /// <paramref name="command"/> and wraps the stream in the vision layer when
+    /// <paramref name="flow"/> asks for it. TCP and UDP differ only in that command,
+    /// in the flow and in the framing above this point, so both dials share this.
+    /// </summary>
+    private async Task<ProxyStream> OpenRequestAsync(
+        Metadata metadata,
+        Stream? upstream,
+        byte command,
+        string? flow,
+        CancellationToken cancellationToken)
+    {
         var raw = await OpenAsync(metadata, upstream, cancellationToken).ConfigureAwait(false);
         try
         {
-            if (vision) RequireVisionTransport(raw);
+            if (flow is not null) RequireVisionTransport(raw);
 
             var host = OutboundOptions.Destination(metadata);
-            var addons = VlessCrypto.EncodeAddons(_flow);
+            var addons = VlessCrypto.EncodeAddons(flow);
             var header = new byte[VlessWire.PrefixSize + addons.Length + 1 + 2 + VlessAddress.Size(host)];
             var written = VlessWire.WriteRequestHeader(
                 header,
                 _uuid,
-                VlessCrypto.CommandTcp,
+                command,
                 host,
                 metadata.DestinationPort,
                 addons);
@@ -740,9 +908,12 @@ public sealed class VlessAdapter : OutboundAdapter
 
             // The response header is consumed before any padding block, so the vision
             // layer wraps it rather than the other way round — the reference order.
+            // A UDP association has no padding at all, but the server still opens the
+            // response with the same version/addons header, which VlessTcpStream eats
+            // on the first read before the datagram frames begin.
             var framed = new VlessTcpStream(raw);
-            Stream top = vision ? new VlessVisionStream(framed, _uuid) : framed;
-            return Complete(Wrap(top, raw));
+            Stream top = flow is null ? framed : new VlessVisionStream(framed, _uuid);
+            return Wrap(top, raw);
         }
         catch (Exception ex)
         {
@@ -750,6 +921,17 @@ public sealed class VlessAdapter : OutboundAdapter
             throw Fail(ex);
         }
     }
+
+    /// <summary>
+    /// The endpoint a datagram of this association came from: the destination the
+    /// request header named, because no frame repeats it. A destination that is a
+    /// name rather than an address has no endpoint to report, and the tunnel then
+    /// falls back to the remote it keyed the session on.
+    /// </summary>
+    private static EndPoint? RemoteEndpoint(Metadata metadata)
+        => IPAddress.TryParse(OutboundOptions.Destination(metadata), out var address)
+            ? new IPEndPoint(address, metadata.DestinationPort)
+            : null;
 
     /// <summary>
     /// XTLS Vision only exists for a plain TCP stream under TLS (Xray documents the

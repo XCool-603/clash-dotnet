@@ -48,6 +48,16 @@ $root = Split-Path -Parent $PSScriptRoot
 $results = New-Object System.Collections.ArrayList
 $core = $null
 $originJob = $null
+$udpEchoJob = $null
+
+# Protocols whose adapters are required to carry datagrams. A protocol missing
+# from this list is allowed to advertise udp=false (and is then skipped by the
+# datagram probe); a protocol on it that stops advertising UDP fails the run.
+$UdpExpected = @(
+    'trojan',
+    'vmess', 'vmess-ws', 'vmess-tls',
+    'vless', 'vless-ws', 'vless-tls'
+)
 $xray = $null
 $singbox = $null
 $homeDir = Join-Path ([System.IO.Path]::GetTempPath()) ("clash-interop-" + [Guid]::NewGuid().ToString('n').Substring(0, 8))
@@ -96,6 +106,62 @@ function Wait-ForHttp {
 function Get-Api {
     param([string]$Path)
     return Invoke-RestMethod -Uri ("http://127.0.0.1:{0}{1}" -f $ApiPort, $Path) -TimeoutSec 10 -UseBasicParsing
+}
+
+# -- UDP probe -----------------------------------------------------------------
+# A loopback UDP echo server plus a SOCKS5 UDP ASSOCIATE client. The HTTP probe
+# above only proves the stream path; this proves the datagram path, which is what
+# `udp: true` on a node actually promises. Xray's freedom outbound relays the
+# datagram to the echo server, so a reply can only come back through the adapter
+# under test.
+function Start-UdpEcho {
+    param([int]$Port)
+    return Start-Job -ScriptBlock {
+        param($p)
+        $u = New-Object System.Net.Sockets.UdpClient($p)
+        $ep = New-Object System.Net.IPEndPoint([System.Net.IPAddress]::Any, 0)
+        $deadline = (Get-Date).AddSeconds(300)
+        while ((Get-Date) -lt $deadline) {
+            try {
+                $u.Client.ReceiveTimeout = 2000
+                $data = $u.Receive([ref]$ep)
+                $reply = [Text.Encoding]::ASCII.GetBytes('udp:' + [Text.Encoding]::ASCII.GetString($data))
+                $u.Send($reply, $reply.Length, $ep) | Out-Null
+            } catch { }
+        }
+        $u.Close()
+    } -ArgumentList $Port
+}
+
+function Invoke-Socks5UdpProbe {
+    param([int]$ProxyPort, [string]$TargetHost, [int]$TargetPort, [string]$Payload)
+    $tcp = New-Object System.Net.Sockets.TcpClient
+    $tcp.Connect('127.0.0.1', $ProxyPort)
+    $s = $tcp.GetStream()
+    # greeting: version 5, one method, no-auth
+    $s.Write([byte[]]@(5, 1, 0), 0, 3); $s.Flush()
+    $greet = New-Object byte[] 2; $s.Read($greet, 0, 2) | Out-Null
+    # UDP ASSOCIATE with address 0.0.0.0:0 - the client will send from anywhere
+    $s.Write([byte[]]@(5, 3, 0, 1, 0, 0, 0, 0, 0, 0), 0, 10); $s.Flush()
+    $reply = New-Object byte[] 10; $s.Read($reply, 0, 10) | Out-Null
+    if ($reply[1] -ne 0) { throw ("UDP ASSOCIATE refused with reply code " + $reply[1]) }
+    $relayIp = [string]::Join('.', $reply[4..7])
+    $relayPort = $reply[8] * 256 + $reply[9]
+    $ip = ([System.Net.IPAddress]::Parse($TargetHost)).GetAddressBytes()
+    $packet = [byte[]]@(0, 0, 0, 1) + $ip +
+        [byte[]]@([byte]($TargetPort -shr 8), [byte]($TargetPort -band 0xFF)) +
+        [Text.Encoding]::ASCII.GetBytes($Payload)
+    $udp = New-Object System.Net.Sockets.UdpClient
+    $udp.Client.ReceiveTimeout = 10000
+    try {
+        $udp.Send($packet, $packet.Length, $relayIp, $relayPort) | Out-Null
+        $from = New-Object System.Net.IPEndPoint([System.Net.IPAddress]::Any, 0)
+        $resp = $udp.Receive([ref]$from)
+    } finally {
+        $udp.Close(); $tcp.Close()
+    }
+    # strip the 10-byte SOCKS5 UDP header (RSV, FRAG, ATYP=1, IPv4, port)
+    return [Text.Encoding]::ASCII.GetString($resp[10..($resp.Length - 1)])
 }
 
 try {
@@ -242,6 +308,14 @@ try {
         throw 'the local origin server never came up'
     }
 
+    # -- Local UDP echo server, for the datagram probe -----------------------
+    $udpEchoPort = $OriginPort + 1
+    $udpEchoJob = Start-UdpEcho -Port $udpEchoPort
+    Start-Sleep -Seconds 2
+    if (-not (Get-NetUDPEndpoint -LocalPort $udpEchoPort -ErrorAction SilentlyContinue)) {
+        throw 'the local UDP echo server never came up'
+    }
+
     # ── Clash configuration: one proxy per protocol under test ──────────────
     New-Item -ItemType Directory -Force -Path $homeDir | Out-Null
     $proxyEntries = New-Object System.Collections.ArrayList
@@ -297,6 +371,7 @@ try {
     network: ws
     ws-opts:
       path: /ws
+    udp: true
 "@
             }
             'vless-tls' {
@@ -309,6 +384,7 @@ try {
     tls: true
     sni: 127.0.0.1
     skip-cert-verify: true
+    udp: true
 "@
             }
             'vmess-tls' {
@@ -323,6 +399,7 @@ try {
     tls: true
     sni: 127.0.0.1
     skip-cert-verify: true
+    udp: true
 "@
             }
             'trojan' {
@@ -442,6 +519,39 @@ rules:
         if (($again -join '') -ne 'clash-interop-ok') {
             Add-Result "$name (second request)" 'FAIL' ("body='" + ($again -join '') + "'")
         }
+
+        # Datagram path: the same selected node, a UDP association instead of a
+        # stream. The adapter advertises whether it carries datagrams at all, so a
+        # protocol that does not is reported as skipped rather than failed - but a
+        # protocol that *does* advertise UDP must actually relay, and one that
+        # should support UDP is not allowed to quietly stop advertising it.
+        $udpAdvertised = $false
+        try {
+            $nodeInfo = Get-Api ("/proxies/" + [uri]::EscapeDataString($name))
+            $udpAdvertised = [bool]$nodeInfo.udp
+        } catch { }
+
+        if (-not $udpAdvertised) {
+            if ($UdpExpected -contains $name) {
+                Add-Result "$name (udp)" 'FAIL' 'this protocol is expected to carry UDP but the adapter advertises udp=false'
+            } else {
+                Add-Result "$name (udp)" 'SKIP' 'the adapter does not carry datagrams'
+            }
+            continue
+        }
+
+        $udpPayload = "udp-" + $name
+        try {
+            $echo = Invoke-Socks5UdpProbe -ProxyPort $MixedPort -TargetHost '127.0.0.1' `
+                -TargetPort $udpEchoPort -Payload $udpPayload
+            if ($echo -eq ("udp:" + $udpPayload)) {
+                Add-Result "$name (udp)" 'PASS' 'a datagram reached the echo server and came back'
+            } else {
+                Add-Result "$name (udp)" 'FAIL' ("reply='" + $echo + "'")
+            }
+        } catch {
+            Add-Result "$name (udp)" 'FAIL' $_.Exception.Message
+        }
     }
 
     $traffic = Get-Api '/connections'
@@ -470,6 +580,9 @@ finally {
         }
         if ($originJob) {
             try { Stop-Job $originJob -ErrorAction SilentlyContinue; Remove-Job $originJob -Force -ErrorAction SilentlyContinue } catch { }
+        }
+        if ($udpEchoJob) {
+            try { Stop-Job $udpEchoJob -ErrorAction SilentlyContinue; Remove-Job $udpEchoJob -Force -ErrorAction SilentlyContinue } catch { }
         }
         foreach ($port in @($ApiPort, $MixedPort, $OriginPort) + @($inbounds.Values | ForEach-Object { $_.Port })) {
             try {

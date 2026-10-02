@@ -1,11 +1,13 @@
 using System.Buffers.Binary;
 using System.IO.Hashing;
+using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 using Clash.Core.Adapter;
 using Clash.Core.Common;
 using Clash.Core.Configuration;
 using Clash.Core.Crypto;
+using Clash.Core.Proxies.Outbound;
 using Xunit;
 
 namespace Clash.Tests.Outbound;
@@ -28,6 +30,7 @@ public class VmessTests
     private const byte Version = 1;
     private const byte OptionChunkStream = 1;
     private const byte CommandTcp = 1;
+    private const byte CommandUdp = 2;
     private const byte AtypIpv4 = 1;
     private const byte AtypDomain = 2;
     private const byte AtypIpv6 = 3;
@@ -289,6 +292,206 @@ public class VmessTests
         Assert.Equal(payload, seen.Payload);
     }
 
+    // ── UDP over the same TCP connection ─────────────────────────────────────
+
+    /// <summary>
+    /// Offset of the command byte in the header body, from the layout documented on
+    /// <c>VmessRequestHeader</c>: version(1) || IV(16) || key(16) || responseHeader(1)
+    /// || option(1) || padding/security(1) || reserved(1) || command(1).
+    /// </summary>
+    private const int CommandOffset = 1 + 16 + 16 + 1 + 1 + 1 + 1;
+
+    /// <summary>Writes a header body with the reference layout and returns it.</summary>
+    private static byte[] WriteHeaderBody(byte command)
+    {
+        var body = new byte[VmessRequestHeader.BodySize("example.com", 0)];
+        var written = VmessRequestHeader.WriteBody(
+            body,
+            new byte[VmessRequestHeader.RequestBodyIvSize],
+            new byte[VmessRequestHeader.RequestBodyKeySize],
+            responseHeader: 0x5A,
+            command,
+            VmessSecurity.Aes128Gcm,
+            "example.com",
+            443,
+            []);
+
+        Assert.Equal(body.Length, written);
+        return body;
+    }
+
+    [Fact]
+    public void TheUdpRequestHeaderCarriesCommand0x02AtTheDocumentedOffset()
+    {
+        var body = WriteHeaderBody(VmessRequestHeader.CommandUdp);
+
+        // The byte itself, the adapter's own constant and the reference's.
+        Assert.Equal(0x02, body[CommandOffset]);
+        Assert.Equal(VmessRequestHeader.CommandUdp, body[CommandOffset]);
+        Assert.Equal(CommandUdp, body[CommandOffset]);
+
+        // The bytes around it, so a shift in the layout could not pass unnoticed.
+        Assert.Equal(Version, body[0]);
+        Assert.Equal(0x5A, body[CommandOffset - 4]);
+        Assert.Equal(OptionChunkStream, body[CommandOffset - 3]);
+        Assert.Equal((byte)VmessSecurity.Aes128Gcm, body[CommandOffset - 2]);
+        Assert.Equal(0x00, body[CommandOffset - 1]);
+    }
+
+    [Fact]
+    public void TheTcpRequestHeaderStillCarriesCommand0x01AtTheDocumentedOffset()
+    {
+        var body = WriteHeaderBody(VmessRequestHeader.CommandTcp);
+
+        Assert.Equal(0x01, body[CommandOffset]);
+        Assert.Equal(VmessRequestHeader.CommandTcp, body[CommandOffset]);
+        Assert.Equal(CommandTcp, body[CommandOffset]);
+    }
+
+    [Fact]
+    public void SupportUdpFollowsTheConfiguredUdpFlag()
+    {
+        Assert.False(OutboundHarness.Build(Entry(443)).SupportUdp);
+        Assert.True(OutboundHarness.Build(Entry(443, ("udp", true))).SupportUdp);
+    }
+
+    [Theory]
+    [InlineData(false)] // udp omitted entirely, which is the default
+    [InlineData(true)]  // udp written out as false
+    public async Task DialUdpRefusesWhenUdpIsNotEnabled(bool writeTheFlag)
+    {
+        var entry = writeTheFlag ? Entry(443, ("udp", false)) : Entry(443);
+        var adapter = OutboundHarness.Build(entry);
+
+        Assert.False(adapter.SupportUdp);
+
+        var ex = await Assert.ThrowsAsync<NotSupportedException>(
+            () => adapter.DialUdpAsync(OutboundHarness.UdpFlow("1.1.1.1", 53)));
+
+        Assert.Equal("proxy [vmess-node] of type [Vmess] has UDP disabled in its configuration", ex.Message);
+    }
+
+    [Fact]
+    public async Task AeadUdpCarriesOneDatagramPerChunk()
+    {
+        var datagram = Encoding.ASCII.GetBytes("vmess udp datagram");
+        var reply = Encoding.ASCII.GetBytes("vmess udp reply");
+
+        FakeVmessServer? seen = null;
+        await using var server = new FakeTcpServer(async (stream, ct) =>
+        {
+            var session = new FakeVmessServer(stream);
+            seen = session;
+            await session.ReadRequestAsync(datagram.Length, ct);
+            await session.WriteResponseAsync(reply, ct);
+            await OutboundHarness.DrainAsync(stream, ct);
+        });
+
+        var adapter = OutboundHarness.Build(Entry(server.Port, ("udp", true)));
+        await using var connection = await adapter.DialUdpAsync(OutboundHarness.UdpFlow("1.1.1.1", 53));
+
+        var destination = new IPEndPoint(IPAddress.Parse("1.1.1.1"), 53);
+        Assert.Equal(datagram.Length, await connection.SendAsync(datagram, destination));
+
+        var buffer = new byte[65535];
+        var received = await connection.ReceiveAsync(buffer);
+
+        Assert.Equal(reply.Length, received.BytesRead);
+        Assert.Equal(reply, buffer[..received.BytesRead].ToArray());
+        Assert.Equal(destination, received.Remote);
+
+        await connection.DisposeAsync();
+        await server.WaitAsync();
+
+        var wire = seen!;
+
+        // The request header says UDP, and it names the destination the association
+        // was dialled for.
+        Assert.Equal(CommandUdp, wire.Command);
+        Assert.Equal(AtypIpv4, wire.AddressType);
+        Assert.Equal("1.1.1.1", wire.Host);
+        Assert.Equal(53, wire.Port);
+
+        // One SendAsync produced exactly one chunk whose plaintext length field
+        // counts the payload plus the 16-byte AEAD tag, and that length field is the
+        // two big-endian bytes the framing requires.
+        Assert.Equal(datagram, wire.Payload);
+        Assert.Single(wire.ChunkLengths);
+        Assert.Equal(datagram.Length + 16, wire.ChunkLengths[0]);
+        Assert.Equal(Uint16Bytes((ushort)(datagram.Length + 16)), wire.ChunkLengthPrefixes[0]);
+        Assert.Equal(new ushort[] { 0 }, wire.ChunkCounters);
+    }
+
+    [Fact]
+    public async Task AeadUdpKeepsDatagramBoundaries()
+    {
+        var first = Encoding.ASCII.GetBytes("first datagram");
+        var second = Encoding.ASCII.GetBytes("second datagram, which is longer");
+        var replies = new[]
+        {
+            Encoding.ASCII.GetBytes("reply one"),
+            Encoding.ASCII.GetBytes("reply two, which is longer"),
+        };
+
+        FakeVmessServer? seen = null;
+        await using var server = new FakeTcpServer(async (stream, ct) =>
+        {
+            var session = new FakeVmessServer(stream);
+            seen = session;
+            await session.ReadRequestAsync(first.Length + second.Length, ct);
+            await session.WriteResponseDatagramsAsync(replies, ct);
+            await OutboundHarness.DrainAsync(stream, ct);
+        });
+
+        var adapter = OutboundHarness.Build(Entry(server.Port, ("udp", true)));
+        await using var connection = await adapter.DialUdpAsync(OutboundHarness.UdpFlow("9.9.9.9", 5353));
+
+        var destination = new IPEndPoint(IPAddress.Parse("9.9.9.9"), 5353);
+        await connection.SendAsync(first, destination);
+        await connection.SendAsync(second, destination);
+
+        var buffer = new byte[65535];
+        var one = await connection.ReceiveAsync(buffer);
+        var onePayload = buffer[..one.BytesRead].ToArray();
+        var two = await connection.ReceiveAsync(buffer);
+        var twoPayload = buffer[..two.BytesRead].ToArray();
+
+        Assert.Equal(replies[0], onePayload);
+        Assert.Equal(replies[1], twoPayload);
+
+        await connection.DisposeAsync();
+        await server.WaitAsync();
+
+        var wire = seen!;
+
+        // Two datagrams in, two chunks out: the client must never merge them, and the
+        // chunk nonce must advance once per datagram.
+        Assert.Equal(2, wire.ChunkLengths.Count);
+        Assert.Equal(new[] { first.Length + 16, second.Length + 16 }, wire.ChunkLengths);
+        Assert.Equal(new ushort[] { 0, 1 }, wire.ChunkCounters);
+        Assert.Equal([.. first, .. second], wire.Payload);
+    }
+
+    [Fact]
+    public async Task AnOversizeDatagramIsRefusedRatherThanSplitInTwo()
+    {
+        await using var server = new FakeTcpServer((stream, ct) => OutboundHarness.DrainAsync(stream, ct));
+
+        var adapter = OutboundHarness.Build(Entry(server.Port, ("udp", true)));
+        await using var connection = await adapter.DialUdpAsync(OutboundHarness.UdpFlow("1.1.1.1", 53));
+
+        // One chunk is one datagram, so a datagram that does not fit one chunk
+        // cannot be sent without inventing a boundary the peer cannot see.
+        var oversized = new byte[VmessBody.MaxPayloadSize(VmessSecurity.Aes128Gcm) + 1];
+        var destination = new IPEndPoint(IPAddress.Parse("1.1.1.1"), 53);
+
+        var ex = await Assert.ThrowsAsync<ClashException>(() => connection.SendAsync(oversized, destination).AsTask());
+        Assert.Contains("does not fit", ex.Message);
+
+        await connection.DisposeAsync();
+        await server.WaitAsync();
+    }
+
     // ── construction ─────────────────────────────────────────────────────────
 
     [Fact]
@@ -530,6 +733,9 @@ public class VmessTests
 
         internal List<int> ChunkLengths { get; } = [];
 
+        /// <summary>The raw two-byte length prefix of every chunk, as it arrived.</summary>
+        internal List<byte[]> ChunkLengthPrefixes { get; } = [];
+
         internal byte[] FirstChunkFrame { get; private set; } = [];
 
         internal byte[] Payload { get; private set; } = [];
@@ -579,6 +785,7 @@ public class VmessTests
                     var plainFrame = new byte[plainFramed];
                     await _stream.ReadExactlyAsync(plainFrame, cancellationToken).ConfigureAwait(false);
                     ChunkLengths.Add(plainFramed);
+                    ChunkLengthPrefixes.Add(plainLengthBytes);
                     plain.AddRange(plainFrame);
                 }
 
@@ -633,6 +840,7 @@ public class VmessTests
 
                 ChunkCounters.Add(counter);
                 ChunkLengths.Add(framed);
+                ChunkLengthPrefixes.Add(lengthBytes);
                 counter++;
                 collected.AddRange(plaintext);
             }
@@ -643,19 +851,7 @@ public class VmessTests
         /// <summary>Seals a response header echoing the client's byte, then frames <paramref name="payload"/>.</summary>
         internal async Task WriteResponseAsync(ReadOnlyMemory<byte> payload, CancellationToken cancellationToken)
         {
-            var responseKey = SHA256.HashData(RequestBodyKey)[..16];
-            var responseIv = SHA256.HashData(RequestBodyIv)[..16];
-
-            var lengthKey = Kdf16(responseKey, Encoding.UTF8.GetBytes("AEAD Resp Header Len Key"));
-            var lengthNonce = Kdf(responseIv, Encoding.UTF8.GetBytes("AEAD Resp Header Len IV"))[..12];
-            var headerKey = Kdf16(responseKey, Encoding.UTF8.GetBytes("AEAD Resp Header Key"));
-            var headerNonce = Kdf(responseIv, Encoding.UTF8.GetBytes("AEAD Resp Header IV"))[..12];
-
-            // [responseHeader][option][command][commandLength]
-            var body = new byte[] { ResponseHeaderByte, 0, 0, 0 };
-
-            await _stream.WriteAsync(AesGcmSeal(lengthKey, lengthNonce, Uint16Bytes((ushort)body.Length), []), cancellationToken).ConfigureAwait(false);
-            await _stream.WriteAsync(AesGcmSeal(headerKey, headerNonce, body, []), cancellationToken).ConfigureAwait(false);
+            await WriteResponseHeaderAsync(cancellationToken).ConfigureAwait(false);
 
             if (Security == VmessSecurity.None)
             {
@@ -663,18 +859,65 @@ public class VmessTests
                 return;
             }
 
-            var aeadKey = Security == VmessSecurity.ChaCha20Poly1305 ? ChachaKey(responseKey) : responseKey;
+            var aeadKey = Security == VmessSecurity.ChaCha20Poly1305 ? ChachaKey(ResponseKey) : ResponseKey;
             var remaining = payload;
             ushort counter = 0;
             while (!remaining.IsEmpty)
             {
                 var take = Math.Min(remaining.Length, ReferenceChunkSize - 16);
-                var chunk = SealChunk((byte)Security, aeadKey, responseIv, remaining.Span[..take].ToArray(), counter);
+                var chunk = SealChunk((byte)Security, aeadKey, ResponseIv, remaining.Span[..take].ToArray(), counter);
                 counter++;
                 await _stream.WriteAsync(chunk, cancellationToken).ConfigureAwait(false);
                 remaining = remaining[take..];
             }
         }
+
+        /// <summary>
+        /// Writes the response header once and then exactly one chunk per datagram,
+        /// which is the shape a VMess UDP association answers with.
+        /// </summary>
+        internal async Task WriteResponseDatagramsAsync(IReadOnlyList<byte[]> datagrams, CancellationToken cancellationToken)
+        {
+            await WriteResponseHeaderAsync(cancellationToken).ConfigureAwait(false);
+
+            ushort counter = 0;
+            foreach (var datagram in datagrams)
+            {
+                if (Security == VmessSecurity.None)
+                {
+                    await _stream.WriteAsync(Uint16Bytes((ushort)datagram.Length), cancellationToken).ConfigureAwait(false);
+                    await _stream.WriteAsync(datagram, cancellationToken).ConfigureAwait(false);
+                }
+                else
+                {
+                    var aeadKey = Security == VmessSecurity.ChaCha20Poly1305 ? ChachaKey(ResponseKey) : ResponseKey;
+                    await _stream.WriteAsync(SealChunk((byte)Security, aeadKey, ResponseIv, datagram, counter), cancellationToken).ConfigureAwait(false);
+                }
+
+                counter++;
+            }
+        }
+
+        /// <summary>Seals the response header, which precedes every body chunk of the response.</summary>
+        internal async Task WriteResponseHeaderAsync(CancellationToken cancellationToken)
+        {
+            var lengthKey = Kdf16(ResponseKey, Encoding.UTF8.GetBytes("AEAD Resp Header Len Key"));
+            var lengthNonce = Kdf(ResponseIv, Encoding.UTF8.GetBytes("AEAD Resp Header Len IV"))[..12];
+            var headerKey = Kdf16(ResponseKey, Encoding.UTF8.GetBytes("AEAD Resp Header Key"));
+            var headerNonce = Kdf(ResponseIv, Encoding.UTF8.GetBytes("AEAD Resp Header IV"))[..12];
+
+            // [responseHeader][option][command][commandLength]
+            var body = new byte[] { ResponseHeaderByte, 0, 0, 0 };
+
+            await _stream.WriteAsync(AesGcmSeal(lengthKey, lengthNonce, Uint16Bytes((ushort)body.Length), []), cancellationToken).ConfigureAwait(false);
+            await _stream.WriteAsync(AesGcmSeal(headerKey, headerNonce, body, []), cancellationToken).ConfigureAwait(false);
+        }
+
+        /// <summary>The server's body key: the first 16 bytes of the SHA-256 of the request's.</summary>
+        private byte[] ResponseKey => SHA256.HashData(RequestBodyKey)[..16];
+
+        /// <inheritdoc cref="ResponseKey"/>
+        private byte[] ResponseIv => SHA256.HashData(RequestBodyIv)[..16];
 
         private async Task WritePlainChunksAsync(ReadOnlyMemory<byte> payload, CancellationToken cancellationToken)
         {

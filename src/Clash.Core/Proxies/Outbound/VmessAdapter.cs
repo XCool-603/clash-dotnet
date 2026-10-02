@@ -98,6 +98,12 @@ internal static class VmessAddress
 /// writes and what v2ray's <c>EncodeRequestHeader</c> writes with its
 /// <c>PortThenAddress</c> address parser.
 /// </para>
+/// <para>
+/// The command byte is <see cref="CommandTcp"/> for a TCP stream and
+/// <see cref="CommandUdp"/> for a UDP association; nothing else in the header
+/// changes between the two, so a UDP association is one TCP connection that
+/// happens to say <c>0x02</c>.
+/// </para>
 /// </summary>
 internal static class VmessRequestHeader
 {
@@ -109,6 +115,13 @@ internal static class VmessRequestHeader
 
     /// <summary>A single TCP stream.</summary>
     internal const byte CommandTcp = 0x01;
+
+    /// <summary>
+    /// A UDP association carried over the same TCP connection. The header is
+    /// otherwise identical to the TCP one and every datagram is one body chunk,
+    /// so the two commands share one handshake.
+    /// </summary>
+    internal const byte CommandUdp = 0x02;
 
     /// <summary>Width of the random request body IV and of the request body key.</summary>
     internal const int RequestBodyIvSize = 16;
@@ -136,12 +149,15 @@ internal static class VmessRequestHeader
     /// <summary>
     /// Writes the header body and returns the number of bytes written. The checksum
     /// covers every byte written before it, exactly as the protocol requires.
+    /// <paramref name="command"/> is <see cref="CommandTcp"/> or
+    /// <see cref="CommandUdp"/> and is the only byte that separates the two.
     /// </summary>
     internal static int WriteBody(
         Span<byte> destination,
         ReadOnlySpan<byte> requestBodyIv,
         ReadOnlySpan<byte> requestBodyKey,
         byte responseHeader,
+        byte command,
         VmessSecurity security,
         string host,
         int port,
@@ -150,6 +166,7 @@ internal static class VmessRequestHeader
         ArgumentNullException.ThrowIfNull(host);
         if (requestBodyIv.Length != RequestBodyIvSize) throw new ArgumentException($"the request body IV must be {RequestBodyIvSize} bytes", nameof(requestBodyIv));
         if (requestBodyKey.Length != RequestBodyKeySize) throw new ArgumentException($"the request body key must be {RequestBodyKeySize} bytes", nameof(requestBodyKey));
+        if (command is not (CommandTcp or CommandUdp)) throw new ArgumentOutOfRangeException(nameof(command), command, "the command must be 0x01 (TCP) or 0x02 (UDP)");
         if (padding.Length >= MaxPaddingLength) throw new ArgumentOutOfRangeException(nameof(padding), padding.Length, $"padding must be shorter than {MaxPaddingLength} bytes");
         if (port is < 0 or > 65535) throw new ArgumentOutOfRangeException(nameof(port));
 
@@ -169,7 +186,7 @@ internal static class VmessRequestHeader
         destination[offset++] = OptionChunkStream;
         destination[offset++] = (byte)((padding.Length << 4) | (byte)security);
         destination[offset++] = 0x00; // reserved
-        destination[offset++] = CommandTcp;
+        destination[offset++] = command;
 
         BinaryPrimitives.WriteUInt16BigEndian(destination[offset..], (ushort)port);
         offset += 2;
@@ -203,13 +220,21 @@ internal static class VmessRequestHeader
 }
 
 /// <summary>
-/// The VMess TCP stream: chunked AEAD framing in both directions, with the server's
+/// The VMess chunked AEAD session: framing in both directions, with the server's
 /// sealed response header consumed lazily on the first read.
 /// <para>
 /// The response header is validated on demand rather than during the dial because a
 /// server is free to answer only after it has seen the client's first bytes;
 /// reading it eagerly would deadlock that exchange. Once it has been checked, every
 /// read decodes exactly one length-prefixed chunk.
+/// </para>
+/// <para>
+/// A TCP flow drives this as a <see cref="Stream"/>, where a write is split across
+/// as many chunks as it needs. A UDP association (<c>command 0x02</c>) drives it
+/// through <see cref="WriteDatagramAsync"/> and <see cref="ReadDatagramAsync"/>
+/// instead, where exactly one chunk is exactly one datagram; both share the same
+/// chunk counters, because the counter is per connection and per direction, not
+/// per chunk kind.
 /// </para>
 /// </summary>
 internal sealed class VmessTcpStream : Stream
@@ -256,6 +281,13 @@ internal sealed class VmessTcpStream : Stream
     public override bool CanSeek => false;
 
     public override bool CanWrite => true;
+
+    /// <summary>
+    /// The local endpoint of the transport underneath, when that transport reports
+    /// one. A datagram association surfaces it as its
+    /// <see cref="IPacketConnection.LocalEndPoint"/>.
+    /// </summary>
+    internal EndPoint? LocalEndPoint => (_inner as ProxyStream)?.LocalEndPoint;
 
     public override long Length => throw new NotSupportedException();
 
@@ -343,6 +375,56 @@ internal sealed class VmessTcpStream : Stream
 
     public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
         => ReadAsync(buffer.AsMemory(offset, count), cancellationToken).AsTask();
+
+    /// <summary>
+    /// Writes one datagram as exactly one body chunk.
+    /// <para>
+    /// Unlike <see cref="WriteAsync(Memory{byte},CancellationToken)"/> this never
+    /// splits the payload: a datagram that went out as two chunks would reach the
+    /// peer as two datagrams, because the peer has no other way to find a boundary.
+    /// A datagram that cannot fit one chunk is therefore refused rather than
+    /// silently broken in two.
+    /// </para>
+    /// </summary>
+    internal async ValueTask WriteDatagramAsync(ReadOnlyMemory<byte> payload, CancellationToken cancellationToken)
+    {
+        var maximum = VmessBody.MaxPayloadSize(_security);
+        if (payload.Length > maximum)
+        {
+            throw new ClashException($"vmess: a {payload.Length}-byte datagram does not fit the {maximum} bytes one chunk can carry");
+        }
+
+        using var scratch = new PooledBuffer(VmessBody.FramedSize(_security, payload.Length));
+        var written = VmessBody.WriteChunk(_security, _requestKey, _requestIv, ref _writeCounter, payload.Span, scratch.Span);
+        await _inner.WriteAsync(scratch.Memory(written), cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Reads exactly one body chunk as exactly one datagram, unlike
+    /// <see cref="ReadAsync(Memory{byte},CancellationToken)"/>, which may hand back
+    /// part of a chunk and leave the rest pending: a partial datagram would be
+    /// indistinguishable from the next one.
+    /// </summary>
+    /// <returns>The datagram length, or 0 when the peer closed the association.</returns>
+    internal async ValueTask<int> ReadDatagramAsync(Memory<byte> buffer, CancellationToken cancellationToken)
+    {
+        await EnsureResponseHeaderAsync(cancellationToken).ConfigureAwait(false);
+
+        // Nothing is ever left pending here: the previous call consumed its whole
+        // chunk. A zero-length frame is the reference's end-of-stream marker, so 0
+        // means the association is gone rather than "an empty datagram arrived".
+        if (_pendingOffset >= _pendingLength && !await ReadChunkAsync(cancellationToken).ConfigureAwait(false)) return 0;
+
+        var length = _pendingLength - _pendingOffset;
+        if (length > buffer.Length)
+        {
+            throw new ClashException($"vmess: a {length}-byte datagram does not fit the caller's {buffer.Length}-byte buffer");
+        }
+
+        _pending.AsSpan(_pendingOffset, length).CopyTo(buffer.Span);
+        _pendingOffset += length;
+        return length;
+    }
 
     /// <summary>
     /// Consumes the sealed response header and checks that the server echoed the
@@ -531,21 +613,111 @@ internal sealed class VmessTcpStream : Stream
 }
 
 /// <summary>
+/// A VMess UDP association: one datagram per body chunk in both directions, over
+/// the TCP connection the <c>0x02</c> request header opened.
+/// <para>
+/// The destination is named once, in the request header, and the peer's chunks
+/// carry no address — so this is a one-destination association, exactly like the
+/// connected-socket one the direct outbound uses: <see cref="SendAsync"/> ignores
+/// the endpoint the caller passes and <see cref="ReceiveAsync"/> reports the
+/// endpoint the association was dialled for.
+/// </para>
+/// </summary>
+internal sealed class VmessPacketConnection : IPacketConnection
+{
+    private readonly VmessTcpStream _stream;
+    private readonly EndPoint? _destination;
+    private readonly SemaphoreSlim _sendLock = new(1, 1);
+    private EndPoint? _lastDestination;
+    private bool _disposed;
+
+    /// <param name="stream">The framed session, which this instance owns.</param>
+    /// <param name="destination">
+    /// The destination the request header named, when it is an address literal. A
+    /// domain destination is left null because the peer's replies cannot name it
+    /// either, and the caller keeps its own record of the flow's remote.
+    /// </param>
+    internal VmessPacketConnection(VmessTcpStream stream, EndPoint? destination)
+    {
+        _stream = stream ?? throw new ArgumentNullException(nameof(stream));
+        _destination = destination;
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// False: the request header fixes the destination, so the caller must keep one
+    /// association per remote.
+    /// </remarks>
+    public bool SupportsMultipleDestinations => false;
+
+    /// <inheritdoc />
+    public EndPoint? LocalEndPoint => _stream.LocalEndPoint;
+
+    /// <inheritdoc />
+    public async ValueTask<int> SendAsync(
+        ReadOnlyMemory<byte> payload,
+        EndPoint destination,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(destination);
+
+        // The chunk counter advances per write, so two datagrams racing each other
+        // would interleave their frames and corrupt the stream.
+        await _sendLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await _stream.WriteDatagramAsync(payload, cancellationToken).ConfigureAwait(false);
+            _lastDestination = destination;
+            return payload.Length;
+        }
+        finally
+        {
+            _sendLock.Release();
+        }
+    }
+
+    /// <inheritdoc />
+    public async ValueTask<PacketResult> ReceiveAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+    {
+        var length = await _stream.ReadDatagramAsync(buffer, cancellationToken).ConfigureAwait(false);
+        if (length == 0)
+        {
+            // A zero-length chunk is the reference's end-of-stream marker, so this
+            // is a closed association rather than an empty datagram.
+            throw new ClashException("vmess: the UDP association was closed by the server");
+        }
+
+        return new PacketResult(length, _destination ?? _lastDestination);
+    }
+
+    /// <inheritdoc />
+    public async ValueTask DisposeAsync()
+    {
+        if (_disposed) return;
+        _disposed = true;
+        _sendLock.Dispose();
+        await _stream.DisposeAsync().ConfigureAwait(false);
+    }
+}
+
+/// <summary>
 /// The <c>vmess</c> adapter: the VMess AEAD handshake (sealed AuthID, an 8-byte
 /// connection nonce and a sealed request header) over whatever transport stack the
 /// composer built from the entry's <c>network</c>/<c>tls</c> options.
 /// <para>
 /// <b>What is covered.</b> TCP with the AEAD header and the chunked AEAD body over
 /// <c>tcp</c>, <c>ws</c>, <c>grpc</c>, <c>h2</c> and <c>http</c>, with or without
-/// TLS, for <c>aes-128-gcm</c>, <c>chacha20-poly1305</c> and <c>none</c>.
+/// TLS, for <c>aes-128-gcm</c>, <c>chacha20-poly1305</c> and <c>none</c>. UDP rides
+/// the same connection with the same framing: the header's command byte is
+/// <c>0x02</c> instead of <c>0x01</c> and one datagram is one body chunk.
 /// <c>alterId</c> is accepted and ignored, because it only selects the legacy
 /// header.
 /// </para>
 /// <para>
-/// <b>What is not covered.</b> UDP over TCP, the legacy (non-AEAD) header that
-/// <c>alterId &gt; 0</c> with an old <c>aes-128-cfb</c> server needs, and mux. The
-/// adapter therefore reports <c>udp: false</c> rather than advertising a capability
-/// it cannot honour.
+/// <b>What is not covered.</b> The legacy (non-AEAD) header that <c>alterId &gt; 0</c>
+/// with an old <c>aes-128-cfb</c> server needs, and mux. UDP follows the entry's
+/// <c>udp</c> flag: <see cref="DialUdpAsync"/> refuses when the configuration did
+/// not ask for it.
 /// </para>
 /// </summary>
 public sealed class VmessAdapter : OutboundAdapter
@@ -554,8 +726,8 @@ public sealed class VmessAdapter : OutboundAdapter
     private readonly byte[] _cmdKey;
     private readonly VmessSecurity _security;
 
-    internal VmessAdapter(ProxyConfigEntry entry, AdapterBuildContext context, byte[] uuid, VmessSecurity security)
-        : base(entry, context, ProxyType.Vmess, udp: false)
+    internal VmessAdapter(ProxyConfigEntry entry, AdapterBuildContext context, byte[] uuid, VmessSecurity security, bool udp)
+        : base(entry, context, ProxyType.Vmess, udp)
     {
         _uuid = uuid;
         _cmdKey = VmessCrypto.CommandKey(uuid);
@@ -584,7 +756,7 @@ public sealed class VmessAdapter : OutboundAdapter
             throw new ProxyCreationException($"proxy [{entry.Name}] (vmess) has a malformed 'uuid' ({text}); expected 32 hex digits, optionally dash-separated");
         }
 
-        var adapter = new VmessAdapter(entry, context, uuid, ParseSecurity(entry));
+        var adapter = new VmessAdapter(entry, context, uuid, ParseSecurity(entry), entry.Map.GetBool("udp"));
 
         var alterId = entry.Map.GetInt("alterId", entry.Map.GetInt("alter-id"));
         if (alterId > 0)
@@ -626,6 +798,63 @@ public sealed class VmessAdapter : OutboundAdapter
     {
         ArgumentNullException.ThrowIfNull(metadata);
 
+        var session = await HandshakeAsync(metadata, VmessRequestHeader.CommandTcp, upstream, cancellationToken)
+            .ConfigureAwait(false);
+
+        return Complete(Wrap(Frame(session), session.Raw));
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// VMess carries UDP over the same TCP connection as TCP, with the same chunked
+    /// AEAD body: the request header is identical except for the command byte, and
+    /// each datagram is exactly one body chunk. The destination travels in the
+    /// request header, so this is a one-destination association and the caller —
+    /// <c>UdpSession</c> in the tunnel — caches one per remote endpoint.
+    /// </remarks>
+    public override async Task<IPacketConnection> DialUdpAsync(Metadata metadata, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(metadata);
+        if (!UdpEnabled)
+        {
+            throw new NotSupportedException($"proxy [{Name}] of type [{TypeName}] has UDP disabled in its configuration");
+        }
+
+        var session = await HandshakeAsync(metadata, VmessRequestHeader.CommandUdp, null, cancellationToken)
+            .ConfigureAwait(false);
+
+        var connection = new VmessPacketConnection(Frame(session), DestinationEndpoint(metadata));
+        TrackConnection(new AsyncDisposeBridge(connection));
+        return connection;
+    }
+
+    /// <summary>
+    /// One VMess session as it stands once the request header has been written: the
+    /// transport and the key material both directions need afterwards.
+    /// </summary>
+    private readonly record struct VmessSession(
+        ProxyStream Raw,
+        byte[] RequestBodyKey,
+        byte[] RequestBodyIv,
+        byte[] ResponseBodyKey,
+        byte[] ResponseBodyIv,
+        VmessAeadKeys ResponseHeaderKeys,
+        byte ResponseHeader);
+
+    /// <summary>
+    /// Opens the transport and performs the AEAD handshake with
+    /// <paramref name="command"/> in the request header. TCP and UDP differ in that
+    /// byte and nowhere else, so both dials share this.
+    /// <para>
+    /// The caller owns the returned transport; on failure it is already disposed.
+    /// </para>
+    /// </summary>
+    private async Task<VmessSession> HandshakeAsync(
+        Metadata metadata,
+        byte command,
+        Stream? upstream,
+        CancellationToken cancellationToken)
+    {
         var raw = await OpenAsync(metadata, upstream, cancellationToken).ConfigureAwait(false);
         try
         {
@@ -650,6 +879,7 @@ public sealed class VmessAdapter : OutboundAdapter
                 requestBodyIv,
                 requestBodyKey,
                 responseHeader,
+                command,
                 _security,
                 host,
                 metadata.DestinationPort,
@@ -675,17 +905,14 @@ public sealed class VmessAdapter : OutboundAdapter
             // The response direction never sees the request body key, so both peers
             // derive it from the request body key and IV the header carried.
             var (responseBodyKey, responseBodyIv) = VmessCrypto.DeriveResponseBodyKeys(requestBodyKey, requestBodyIv);
-            var framed = new VmessTcpStream(
+            return new VmessSession(
                 raw,
-                _security,
                 requestBodyKey,
                 requestBodyIv,
                 responseBodyKey,
                 responseBodyIv,
                 VmessCrypto.DeriveResponseHeaderKeys(responseBodyKey, responseBodyIv),
                 responseHeader);
-
-            return Complete(Wrap(framed, raw));
         }
         catch (Exception ex)
         {
@@ -693,6 +920,30 @@ public sealed class VmessAdapter : OutboundAdapter
             throw Fail(ex);
         }
     }
+
+    /// <summary>Wraps a session's transport in the chunked AEAD framing both commands share.</summary>
+    private VmessTcpStream Frame(VmessSession session)
+        => new(
+            session.Raw,
+            _security,
+            session.RequestBodyKey,
+            session.RequestBodyIv,
+            session.ResponseBodyKey,
+            session.ResponseBodyIv,
+            session.ResponseHeaderKeys,
+            session.ResponseHeader);
+
+    /// <summary>
+    /// The endpoint a UDP association's replies are attributed to. VMess names the
+    /// destination only in the request header and the peer's chunks carry no
+    /// address, so the association answers with the destination it was dialled for;
+    /// a name rather than an address literal is left to the caller's own record of
+    /// the flow, because the packet contract's remote is an <see cref="EndPoint"/>.
+    /// </summary>
+    private static EndPoint? DestinationEndpoint(Metadata metadata)
+        => IPAddress.TryParse(OutboundOptions.Destination(metadata), out var address)
+            ? new IPEndPoint(address, metadata.DestinationPort)
+            : null;
 }
 
 /// <summary>Builds <see cref="VmessAdapter"/> instances.</summary>
