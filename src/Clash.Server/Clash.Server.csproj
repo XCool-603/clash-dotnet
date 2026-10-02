@@ -27,8 +27,22 @@
     TUN mode loads wintun.dll at run time, so it has to sit next to the
     executable. The licence requires the vendor's notice to travel with it, and
     third_party/wintun/README.md records where the binary came from.
+
+    Included only when the output is for Windows: a `win-*` runtime identifier
+    when one was requested, otherwise the build host. Testing the host alone is
+    not enough — `dotnet publish -r linux-x64` from Windows is a normal way to
+    produce the container's payload, and the DLL must not be dragged into it.
+    The container build runs on Linux and excludes third_party from its context,
+    so an unconditional copy fails that publish outright.
   -->
-  <ItemGroup>
+  <PropertyGroup>
+    <IncludeWintun Condition="'$(RuntimeIdentifier)' != ''"
+                   >$([System.String]::Copy('$(RuntimeIdentifier)').StartsWith('win'))</IncludeWintun>
+    <IncludeWintun Condition="'$(RuntimeIdentifier)' == ''"
+                   >$([MSBuild]::IsOSPlatform('Windows'))</IncludeWintun>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(IncludeWintun)' == 'true'">
     <None Include="..\..\third_party\wintun\amd64\wintun.dll"
           Link="wintun.dll"
           CopyToOutputDirectory="PreserveNewest"

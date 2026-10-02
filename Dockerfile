@@ -48,9 +48,15 @@ WORKDIR /app
 COPY --from=build /app ./
 
 COPY docker/config.yaml /opt/clash/config.yaml
-COPY docker/entrypoint.sh /usr/local/bin/clash-entrypoint
-RUN chmod +x /usr/local/bin/clash-entrypoint \
-    && mkdir -p /data
+
+# --chmod rather than `RUN chmod +x`: a Windows checkout can lose the executable
+# bit, and fixing it at COPY time cannot be undone by a later layer.
+COPY --chmod=755 docker/entrypoint.sh /usr/local/bin/clash-entrypoint
+
+# The data directory is created here so that a *named* volume mounted at /data
+# inherits this path's ownership on first use. A bind mount overrides it with the
+# host directory's owner, which is why the process runs as root (below).
+RUN mkdir -p /data
 
 # The configuration and the profile cache live here, so the container is
 # stateless and an upgrade is a pull.
@@ -60,4 +66,18 @@ VOLUME ["/data"]
 # 1053 the DNS listener. Both proxy and DNS carry datagrams, hence udp.
 EXPOSE 7890/tcp 7890/udp 9090/tcp 1053/tcp 1053/udp
 
+# Runs as root, deliberately, and this is the one thing to revisit if you harden
+# the deployment.
+#
+# The documented deployment bind-mounts a host directory over /data so the
+# configuration can be edited from the host. A bind mount replaces the
+# directory's ownership with the host's, so a non-root process cannot write
+# config.yaml there — the failure would be an EACCES on the first run, which is
+# the worst possible place for it. Root avoids that without asking the user to
+# chown anything.
+#
+# To run unprivileged instead, use a named volume (which inherits /data's
+# ownership from this image) and drop the bind mount, then set `user: "10001:10001"`
+# on the service. Ports 7890/9090/1053 are all above 1024, so no capability is
+# needed.
 ENTRYPOINT ["/usr/local/bin/clash-entrypoint"]
