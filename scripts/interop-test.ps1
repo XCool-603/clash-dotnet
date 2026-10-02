@@ -26,8 +26,8 @@
     %TEMP%\clash-interop; pass -Download to fetch Xray-core there first.
 
 .EXAMPLE
-    pwsh -File scripts/interop-test.ps1 -Download
-    pwsh -File scripts/interop-test.ps1 -Protocol vmess,vless
+    powershell -File scripts/interop-test.ps1 -Download
+    powershell -File scripts/interop-test.ps1 -Protocol vmess,vless
 #>
 [CmdletBinding()]
 param(

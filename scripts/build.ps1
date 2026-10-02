@@ -3,8 +3,8 @@
     Builds the backend and the Vue dashboard into src/Clash.Server/wwwroot.
 
 .EXAMPLE
-    pwsh -File scripts/build.ps1
-    pwsh -File scripts/build.ps1 -Configuration Release -SkipFrontend
+    powershell -File scripts/build.ps1
+    powershell -File scripts/build.ps1 -Configuration Release -SkipFrontend
 #>
 [CmdletBinding()]
 param(
@@ -48,4 +48,4 @@ Write-Host ''
 Write-Host 'build complete' -ForegroundColor Green
 Write-Host '  run:      dotnet run --project src/Clash.Server'
 Write-Host '  desktop:  dotnet run --project src/Clash.Desktop'
-Write-Host '  smoke:    pwsh -File scripts/smoke-test.ps1'
+Write-Host '  smoke:    powershell -File scripts/smoke-test.ps1'

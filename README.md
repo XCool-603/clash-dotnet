@@ -50,7 +50,7 @@ autostart and single-instance handling.
 ### Smoke test
 
 ```powershell
-pwsh -File scripts/smoke-test.ps1
+powershell -File scripts/smoke-test.ps1
 ```
 
 Starts the core with a generated configuration, exercises the control API, then
@@ -60,8 +60,8 @@ server and checks that the bytes are accounted for.
 ### Interoperability test
 
 ```powershell
-pwsh -File scripts/interop-test.ps1 -Download            # every protocol
-pwsh -File scripts/interop-test.ps1 -Protocol vmess,vless
+powershell -File scripts/interop-test.ps1 -Download            # every protocol
+powershell -File scripts/interop-test.ps1 -Protocol vmess,vless
 ```
 
 Unit tests assert wire framing against hand-written fake servers, which proves
@@ -82,12 +82,19 @@ connects but does not deliver a response is a `FAIL`. This is the test that
 caught the Trojan adapter consuming a server "response header" that Trojan does
 not have.
 
+Every protocol is probed twice: once with an HTTP request through the mixed
+inbound, and once with a **UDP datagram** through a SOCKS5 `UDP ASSOCIATE` to a
+loopback echo server. The second probe is what makes `udp: true` mean something —
+it fails unless the datagram reaches the echo server and comes back. A protocol
+that does not carry datagrams is reported as skipped, and one that is expected to
+carry them but stops advertising UDP fails the run.
+
 Results on the reference machines used to develop this repository:
 
 | Protocol | Interop result |
 |---|---|
-| `trojan`, `vmess` (tcp/ws/tls), `vless` (tcp/ws/tls) | ✅ verified against Xray-core |
-| `anytls` | ✅ verified against sing-box |
+| `trojan`, `vmess` (tcp/ws/tls), `vless` (tcp/ws/tls) | ✅ verified against Xray-core, TCP and UDP |
+| `anytls` | ✅ verified against sing-box (TCP; it carries no datagrams) |
 | `mieru` | implemented, unit-tested; not yet interoperability-tested — the reference server (`mita`) ships Linux packages only, and this machine has no Linux environment |
 | `hysteria2` | ❌ blocked (see below) |
 | `wireguard` | not interoperability-tested: terminating a real WireGuard peer requires a TUN device or a purpose-built userspace responder |
@@ -127,9 +134,9 @@ exposes no QUIC datagrams and no raw socket underneath.
 | `direct`, `reject`, `reject-drop`, `dns` | ✅ |
 | `ss` (Shadowsocks — AEAD, stream and 2022 ciphers, plugins) | ✅ |
 | `ssr` (ShadowsocksR) | ✅ |
-| `vmess` (VMess, AEAD — TCP, plus UDP over the same connection when `udp: true`) | ✅ interop-verified against Xray-core (TCP); the UDP path is unit-tested only |
-| `vless` (VLESS, `flow: xtls-rprx-vision` padding) | ✅ interop-verified against Xray-core — but `REALITY` is ❌ (see below) and the vision *direct/splice* switch cannot be reproduced over `SslStream` |
-| `trojan` | ✅ interop-verified against Xray-core |
+| `vmess` (VMess, AEAD — TCP, plus UDP over the same connection when `udp: true`) | ✅ interop-verified against Xray-core, TCP **and** UDP, over `tcp`, `ws` and `tls` |
+| `vless` (VLESS — `flow: xtls-rprx-vision` padding, plus UDP over the same connection when `udp: true`) | ✅ interop-verified against Xray-core, TCP **and** UDP, over `tcp`, `ws` and `tls` — but `REALITY` is ❌ (see below) and the vision *direct/splice* switch cannot be reproduced over `SslStream` |
+| `trojan` | ✅ interop-verified against Xray-core, TCP and UDP |
 | `http` / `https` | ✅ |
 | `socks5` (TCP + UDP) | ✅ |
 | `snell` | ✅ |
@@ -138,8 +145,9 @@ exposes no QUIC datagrams and no raw socket underneath.
 | `hysteria` (v1) | ❌ not implemented |
 | `tuic` | ❌ **blocked by the platform**: TUIC v5 authentication needs an RFC 5705 TLS keying-material export, and neither `System.Net.Quic` nor `System.Net.Security` exposes one |
 | `ssh` | ✅ |
-| `anytls` | 🚧 in progress |
-| `mieru` | 🚧 in progress |
+| `anytls` | ✅ interop-verified against sing-box; TCP only — it does not carry datagrams, and the interop harness reports that as skipped rather than passed |
+| `mieru` | implemented and unit-tested (key exchange, SOCKS5 handshake); not interoperability-tested — the reference server (`mita`) ships Linux packages only, and this machine has no Linux environment. UDP is refused |
+| Datagram support by protocol | `ss`, `ssr`, `socks5`, `trojan`, `vmess`, `vless` and `wireguard` carry UDP; `anytls`, `snell`, `ssh` and `http` do not, and `hysteria2`/`mieru` refuse it for platform reasons |
 | Transports: `tcp`, `tls`, `ws`, `grpc`, `h2`, `http` | ✅ |
 
 **`REALITY`.** VLESS with `reality-opts` is refused with a clear error rather than

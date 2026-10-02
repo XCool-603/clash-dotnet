@@ -8,7 +8,7 @@
     origin server. Reports a PASS/FAIL summary and always cleans up.
 
 .EXAMPLE
-    pwsh -File scripts/smoke-test.ps1
+    powershell -File scripts/smoke-test.ps1
 #>
 [CmdletBinding()]
 param(
