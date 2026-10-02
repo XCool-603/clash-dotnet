@@ -19,4 +19,12 @@
     <ProjectReference Include="..\..\src\Clash.Server\Clash.Server.csproj" />
   </ItemGroup>
 
+  <!--
+    The mrs fixtures are real published rule sets, so the decoder tests read them from the
+    output directory instead of the source tree.
+  -->
+  <ItemGroup>
+    <Content Include="Providers\Fixtures\*.mrs" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

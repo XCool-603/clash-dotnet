@@ -22,6 +22,10 @@ internal sealed class FakeHttpMessageHandler : HttpMessageHandler
     public static FakeHttpMessageHandler Returns(string body, params (string Name, string Value)[] headers)
         => new(_ => Response(body, headers));
 
+    /// <summary>Returns a binary <paramref name="body"/> with 200 OK; used for the mrs format.</summary>
+    public static FakeHttpMessageHandler Returns(byte[] body, params (string Name, string Value)[] headers)
+        => new(_ => Response(body, headers));
+
     /// <summary>Fails every request with <paramref name="status"/>.</summary>
     public static FakeHttpMessageHandler Fails(HttpStatusCode status = HttpStatusCode.InternalServerError)
         => new(_ => new HttpResponseMessage(status) { Content = new StringContent("unavailable") });
@@ -37,6 +41,15 @@ internal sealed class FakeHttpMessageHandler : HttpMessageHandler
         {
             Content = new StringContent(body, Encoding.UTF8, "text/plain"),
         };
+
+        foreach (var (name, value) in headers) response.Headers.TryAddWithoutValidation(name, value);
+        return response;
+    }
+
+    /// <summary>Builds a 200 response carrying a binary <paramref name="body"/>.</summary>
+    public static HttpResponseMessage Response(byte[] body, params (string Name, string Value)[] headers)
+    {
+        var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(body) };
 
         foreach (var (name, value) in headers) response.Headers.TryAddWithoutValidation(name, value);
         return response;

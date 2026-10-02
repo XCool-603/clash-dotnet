@@ -17,6 +17,8 @@
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.0" />
     <PackageReference Include="Microsoft.Extensions.Options" Version="10.0.0" />
     <PackageReference Include="System.IO.Hashing" Version="10.0.0" />
+    <!-- mihomo's mrs rule-set container is a zstd stream; this is a pure managed, MIT-licensed decoder. -->
+    <PackageReference Include="ZstdSharp.Port" Version="0.8.8" />
   </ItemGroup>
 
   <!--

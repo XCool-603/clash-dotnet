@@ -16,11 +16,11 @@ namespace Clash.Core.Providers;
 /// <remarks>
 /// <para>
 /// The <c>yaml</c> (a document with a <c>payload:</c> sequence), <c>text</c> (one
-/// entry per line) and <c>mrs</c> formats are recognised. The <c>mrs</c> binary
-/// format mihomo introduced is <b>not decoded</b> by this build: the <c>MRS</c>
-/// magic is detected, a warning is logged and an empty payload is returned, so a
-/// profile referencing an <c>mrs</c> provider still loads and simply matches
-/// nothing for that set instead of failing outright.
+/// entry per line) and <c>mrs</c> formats are recognised. An <c>mrs</c> body is decoded
+/// by <see cref="MrsDecoder"/> into the same entries the other two formats produce; a body
+/// that cannot be decoded — wrong magic, truncated, a behaviour the provider does not
+/// declare — logs a warning and yields an empty payload, so a profile referencing a broken
+/// <c>mrs</c> provider still loads and simply matches nothing for that set.
 /// </para>
 /// <para>
 /// Caching mirrors <see cref="ProxyProviderLoader"/>: a body cached at <c>path</c>
@@ -143,17 +143,17 @@ public sealed class RuleProviderLoader : IRuleProviderLoader, IDisposable
             throw new ProviderException($"rule provider [{name}] file not found: {path}");
         }
 
-        string body;
+        byte[] body;
         try
         {
-            body = File.ReadAllText(path);
+            body = File.ReadAllBytes(path);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             throw new ProviderException($"rule provider [{name}] could not be read from {path}: {ex.Message}", ex);
         }
 
-        return new RuleProviderResult(config.Behavior, ParsePayload(name, config.Format, body), LastWrite(path));
+        return new RuleProviderResult(config.Behavior, ParsePayload(name, config.Format, config.Behavior, body), LastWrite(path));
     }
 
     private async Task<RuleProviderResult> LoadHttpAsync(
@@ -168,7 +168,7 @@ public sealed class RuleProviderLoader : IRuleProviderLoader, IDisposable
 
         if (!forceRefresh && cached is { } fresh && (interval <= TimeSpan.Zero || DateTimeOffset.UtcNow - fresh.UpdatedAt < interval))
         {
-            return new RuleProviderResult(config.Behavior, ParsePayload(name, config.Format, fresh.Body), fresh.UpdatedAt);
+            return new RuleProviderResult(config.Behavior, ParsePayload(name, config.Format, config.Behavior, fresh.Body), fresh.UpdatedAt);
         }
 
         RuleProviderResult? FromCache(string reason)
@@ -181,7 +181,7 @@ public sealed class RuleProviderLoader : IRuleProviderLoader, IDisposable
                 reason,
                 fallback.UpdatedAt);
 
-            return new RuleProviderResult(config.Behavior, ParsePayload(name, config.Format, fallback.Body), fallback.UpdatedAt);
+            return new RuleProviderResult(config.Behavior, ParsePayload(name, config.Format, config.Behavior, fallback.Body), fallback.UpdatedAt);
         }
 
         if (string.IsNullOrWhiteSpace(config.Url))
@@ -189,7 +189,7 @@ public sealed class RuleProviderLoader : IRuleProviderLoader, IDisposable
             return FromCache("has no url") ?? throw new ProviderException($"rule provider [{name}] has no url");
         }
 
-        string body;
+        byte[] body;
         try
         {
             body = await DownloadAsync(config.Url!, cancellationToken).ConfigureAwait(false);
@@ -201,10 +201,10 @@ public sealed class RuleProviderLoader : IRuleProviderLoader, IDisposable
         }
 
         WriteCache(cachePath, body);
-        return new RuleProviderResult(config.Behavior, ParsePayload(name, config.Format, body), DateTimeOffset.UtcNow);
+        return new RuleProviderResult(config.Behavior, ParsePayload(name, config.Format, config.Behavior, body), DateTimeOffset.UtcNow);
     }
 
-    private async Task<string> DownloadAsync(string url, CancellationToken cancellationToken)
+    private async Task<byte[]> DownloadAsync(string url, CancellationToken cancellationToken)
     {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(DownloadTimeout);
@@ -217,22 +217,35 @@ public sealed class RuleProviderLoader : IRuleProviderLoader, IDisposable
             .ConfigureAwait(false);
         response.EnsureSuccessStatusCode();
 
-        return await response.Content.ReadAsStringAsync(timeout.Token).ConfigureAwait(false);
+        return await response.Content.ReadAsByteArrayAsync(timeout.Token).ConfigureAwait(false);
     }
 
     // ── payload parsing ──────────────────────────────────────────────────────
 
-    private List<string> ParsePayload(string name, string? format, string body)
+    /// <summary>
+    /// Turns a fetched body into entries. The body stays bytes until a text format is known,
+    /// because an <c>mrs</c> provider is a zstd stream and decoding it as UTF-8 text would
+    /// destroy it.
+    /// </summary>
+    private List<string> ParsePayload(string name, string? format, string? behavior, byte[] body)
     {
-        if (string.IsNullOrWhiteSpace(body)) return [];
+        if (body.Length == 0) return [];
 
         return (format ?? "yaml").Trim().ToLowerInvariant() switch
         {
-            "yaml" or "yml" => ReadYamlPayload(body),
-            "text" => ReadTextPayload(body),
-            "mrs" => ReadMrsPayload(name, body),
-            _ => ReadTextPayload(body),
+            "yaml" or "yml" => ReadYamlPayload(ReadText(body)),
+            "text" => ReadTextPayload(ReadText(body)),
+            "mrs" => ReadMrsPayload(name, behavior, body),
+            _ => ReadTextPayload(ReadText(body)),
         };
+    }
+
+    /// <summary>Decodes a body as UTF-8 text, dropping the byte-order mark a reader would skip.</summary>
+    private static string ReadText(byte[] body)
+    {
+        var span = body.AsSpan();
+        if (span.Length >= 3 && span[0] == 0xEF && span[1] == 0xBB && span[2] == 0xBF) span = span[3..];
+        return Encoding.UTF8.GetString(span);
     }
 
     private static List<string> ReadYamlPayload(string body)
@@ -290,23 +303,23 @@ public sealed class RuleProviderLoader : IRuleProviderLoader, IDisposable
         return result;
     }
 
-    private List<string> ReadMrsPayload(string name, string body)
+    private List<string> ReadMrsPayload(string name, string? behavior, byte[] body)
     {
-        if (body.StartsWith("MRS", StringComparison.Ordinal))
+        try
         {
-            _logger?.LogWarning(
-                "rule provider [{Name}] serves mihomo's binary mrs format, which this build cannot decode; " +
-                "the rule set is empty. Convert it to yaml or text to use it.",
-                name);
+            return MrsDecoder.Decode(body, behavior);
         }
-        else
+        catch (ProviderException ex)
         {
+            // A file the decoder cannot make sense of must leave an empty set that matches
+            // nothing, never take the core (or a reload) down.
             _logger?.LogWarning(
-                "rule provider [{Name}] declares format mrs but the body carries no MRS magic; the rule set is empty.",
-                name);
-        }
+                "rule provider [{Name}] serves an mrs payload that could not be decoded; the rule set is empty: {Message}",
+                name,
+                ex.Message);
 
-        return [];
+            return [];
+        }
     }
 
     private static void Flatten(object? node, List<string> into)
@@ -373,14 +386,14 @@ public sealed class RuleProviderLoader : IRuleProviderLoader, IDisposable
         }
     }
 
-    private static (string Body, DateTimeOffset UpdatedAt)? ReadCache(string path)
+    private static (byte[] Body, DateTimeOffset UpdatedAt)? ReadCache(string path)
     {
         try
         {
             if (!File.Exists(path)) return null;
 
-            var body = File.ReadAllText(path);
-            if (string.IsNullOrWhiteSpace(body)) return null;
+            var body = File.ReadAllBytes(path);
+            if (body.Length == 0) return null;
 
             return (body, new DateTimeOffset(File.GetLastWriteTimeUtc(path), TimeSpan.Zero));
         }
@@ -390,14 +403,14 @@ public sealed class RuleProviderLoader : IRuleProviderLoader, IDisposable
         }
     }
 
-    private void WriteCache(string path, string body)
+    private void WriteCache(string path, byte[] body)
     {
         try
         {
             var directory = Path.GetDirectoryName(path);
             if (!string.IsNullOrEmpty(directory)) Directory.CreateDirectory(directory);
 
-            File.WriteAllText(path, body);
+            File.WriteAllBytes(path, body);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
