@@ -21,17 +21,29 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private readonly ContextMenuStrip _menu;
     private readonly SynchronizationContext _ui;
 
-    private readonly ToolStripMenuItem _statusItem = new("Starting…") { Enabled = false };
-    private readonly ToolStripMenuItem _dashboardItem = new("Open Dashboard");
-    private readonly ToolStripMenuItem _ruleModeItem = new("Rule") { CheckOnClick = false };
-    private readonly ToolStripMenuItem _globalModeItem = new("Global") { CheckOnClick = false };
-    private readonly ToolStripMenuItem _directModeItem = new("Direct") { CheckOnClick = false };
-    private readonly ToolStripMenuItem _systemProxyItem = new("System Proxy") { CheckOnClick = false };
-    private readonly ToolStripMenuItem _restartItem = new("Restart Core");
-    private readonly ToolStripMenuItem _autostartItem = new("Run at Startup") { CheckOnClick = false };
-    private readonly ToolStripMenuItem _exitItem = new("Exit");
+    private readonly ToolStripMenuItem _statusItem = new() { Enabled = false };
+    private readonly ToolStripMenuItem _dashboardItem = new();
+    private readonly ToolStripMenuItem _ruleModeItem = new() { CheckOnClick = false };
+    private readonly ToolStripMenuItem _globalModeItem = new() { CheckOnClick = false };
+    private readonly ToolStripMenuItem _directModeItem = new() { CheckOnClick = false };
+    private readonly ToolStripMenuItem _systemProxyItem = new() { CheckOnClick = false };
+    private readonly ToolStripMenuItem _restartItem = new();
+    private readonly ToolStripMenuItem _autostartItem = new() { CheckOnClick = false };
+    private readonly ToolStripMenuItem _modeMenu = new();
+    private readonly ToolStripMenuItem _languageMenu = new();
+    private readonly ToolStripMenuItem _englishItem = new() { CheckOnClick = false };
+    private readonly ToolStripMenuItem _chineseItem = new() { CheckOnClick = false };
+    private readonly ToolStripMenuItem _exitItem = new();
 
     private bool _shuttingDown;
+
+    /// <summary>
+    /// The status line is kept as a message key rather than rendered text, so a
+    /// language switch can re-render the current state instead of leaving the
+    /// previous language's sentence on screen.
+    /// </summary>
+    private string _statusKey = "status.starting";
+    private object?[] _statusArgs = [];
 
     public TrayApplicationContext(string[] args, SingleInstance singleInstance)
     {
@@ -43,15 +55,20 @@ internal sealed class TrayApplicationContext : ApplicationContext
         _tray = new NotifyIcon
         {
             Icon = SystemIcons.Application,
-            Text = "Clash for .NET",
+            Text = TrayStrings.T("app.name"),
             ContextMenuStrip = _menu,
             Visible = true,
         };
+
+        // After _tray exists: ApplyLanguage renders the status, which writes the
+        // tray tooltip as well as the menu caption.
+        ApplyLanguage();
+        TrayStrings.Changed += OnLanguageChanged;
+
         _tray.DoubleClick += (_, _) => OpenDashboard();
 
         _singleInstance.ShowRequested += OnShowRequested;
-        _core.Faulted += message => RunOnUi(() => Notify("Clash for .NET", message, ToolTipIcon.Warning));
-
+        _core.Faulted += message => RunOnUi(() => Notify(TrayStrings.T("app.name"), message, ToolTipIcon.Warning));
         _ = StartCoreAsync();
     }
 
@@ -64,10 +81,12 @@ internal sealed class TrayApplicationContext : ApplicationContext
         _systemProxyItem.Click += async (_, _) => await ToggleSystemProxyAsync();
         _restartItem.Click += async (_, _) => await RestartCoreAsync();
         _autostartItem.Click += (_, _) => ToggleAutostart();
+        _englishItem.Click += (_, _) => TrayStrings.Set(TrayLanguage.English);
+        _chineseItem.Click += (_, _) => TrayStrings.Set(TrayLanguage.Chinese);
         _exitItem.Click += async (_, _) => await ExitAsync();
 
-        var modeMenu = new ToolStripMenuItem("Mode");
-        modeMenu.DropDownItems.AddRange([_ruleModeItem, _globalModeItem, _directModeItem]);
+        _modeMenu.DropDownItems.AddRange([_ruleModeItem, _globalModeItem, _directModeItem]);
+        _languageMenu.DropDownItems.AddRange([_englishItem, _chineseItem]);
 
         var menu = new ContextMenuStrip();
         menu.Items.AddRange(
@@ -75,11 +94,12 @@ internal sealed class TrayApplicationContext : ApplicationContext
             _statusItem,
             new ToolStripSeparator(),
             _dashboardItem,
-            modeMenu,
+            _modeMenu,
             _systemProxyItem,
             new ToolStripSeparator(),
             _restartItem,
             _autostartItem,
+            _languageMenu,
             new ToolStripSeparator(),
             _exitItem,
         ]);
@@ -87,11 +107,39 @@ internal sealed class TrayApplicationContext : ApplicationContext
         return menu;
     }
 
+    /// <summary>
+    /// Writes every caption in the active language. Called once at startup and
+    /// again whenever the language changes, which is why the captions are not set
+    /// where the items are constructed.
+    /// </summary>
+    private void ApplyLanguage()
+    {
+        _dashboardItem.Text = TrayStrings.T("menu.dashboard");
+        _modeMenu.Text = TrayStrings.T("menu.mode");
+        _ruleModeItem.Text = TrayStrings.T("menu.mode.rule");
+        _globalModeItem.Text = TrayStrings.T("menu.mode.global");
+        _directModeItem.Text = TrayStrings.T("menu.mode.direct");
+        _systemProxyItem.Text = TrayStrings.T("menu.systemProxy");
+        _restartItem.Text = TrayStrings.T("menu.restart");
+        _autostartItem.Text = TrayStrings.T("menu.autostart");
+        _languageMenu.Text = TrayStrings.T("menu.language");
+        _exitItem.Text = TrayStrings.T("menu.exit");
+
+        _englishItem.Text = TrayStrings.Label(TrayLanguage.English);
+        _chineseItem.Text = TrayStrings.Label(TrayLanguage.Chinese);
+        _englishItem.Checked = !TrayStrings.IsChinese;
+        _chineseItem.Checked = TrayStrings.IsChinese;
+
+        RenderStatus();
+    }
+
+    private void OnLanguageChanged() => RunOnUi(ApplyLanguage);
+
     // ── Core lifecycle ───────────────────────────────────────────────────────
 
     private async Task StartCoreAsync()
     {
-        SetStatus("Starting…");
+        SetStatus("status.starting");
 
         try
         {
@@ -99,18 +147,18 @@ internal sealed class TrayApplicationContext : ApplicationContext
         }
         catch (Exception ex)
         {
-            SetStatus("Stopped");
-            Notify("The core could not start", ex.Message, ToolTipIcon.Error);
+            SetStatus("status.stopped");
+            Notify(TrayStrings.T("notify.coreStartFailed.title"), ex.Message, ToolTipIcon.Error);
             return;
         }
 
         if (!await _core.WaitUntilReadyAsync(TimeSpan.FromSeconds(15)).ConfigureAwait(true))
         {
-            SetStatus("Started, but the control API is not answering");
+            SetStatus("status.apiNotAnswering");
         }
         else
         {
-            SetStatus(DescribeRunningState());
+            SetRunningState();
         }
 
         // Adopt whatever state the machine is already in rather than assuming.
@@ -122,25 +170,25 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
     private async Task RestartCoreAsync()
     {
-        SetStatus("Restarting…");
+        SetStatus("status.restarting");
         try
         {
             await _core.RestartAsync().ConfigureAwait(true);
             if (!await _core.WaitUntilReadyAsync(TimeSpan.FromSeconds(15)).ConfigureAwait(true))
             {
-                SetStatus("Restarted, but the control API is not answering");
+                SetStatus("status.restartedApiNotAnswering");
             }
             else
             {
-                SetStatus(DescribeRunningState());
+                SetRunningState();
             }
 
             await RefreshModeAsync().ConfigureAwait(true);
         }
         catch (Exception ex)
         {
-            SetStatus("Stopped");
-            Notify("The core could not be restarted", ex.Message, ToolTipIcon.Error);
+            SetStatus("status.stopped");
+            Notify(TrayStrings.T("notify.coreRestartFailed.title"), ex.Message, ToolTipIcon.Error);
         }
     }
 
@@ -189,7 +237,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         }
         catch (Exception ex)
         {
-            Notify("The dashboard could not be opened", ex.Message, ToolTipIcon.Error);
+            Notify(TrayStrings.T("notify.dashboardFailed.title"), ex.Message, ToolTipIcon.Error);
         }
     }
 
@@ -197,7 +245,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
     {
         if (!await _core.SetModeAsync(mode).ConfigureAwait(true))
         {
-            Notify("The mode could not be changed", $"The core did not accept `mode: {mode}`.", ToolTipIcon.Warning);
+            Notify(TrayStrings.T("notify.modeFailed.title"), TrayStrings.T("notify.modeFailed.message", mode), ToolTipIcon.Warning);
             await RefreshModeAsync().ConfigureAwait(true);
             return;
         }
@@ -227,7 +275,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
             var port = _core.MixedPort;
             if (port == 0)
             {
-                Notify("No proxy port", "The configuration has no `mixed-port` (or `port`), so there is nothing to point the system proxy at.", ToolTipIcon.Warning);
+                Notify(TrayStrings.T("notify.noProxyPort.title"), TrayStrings.T("notify.noProxyPort.message"), ToolTipIcon.Warning);
                 return;
             }
 
@@ -237,7 +285,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
             }
             catch (Exception ex)
             {
-                Notify("The system proxy could not be enabled", ex.Message, ToolTipIcon.Error);
+                Notify(TrayStrings.T("notify.systemProxyFailed.title"), ex.Message, ToolTipIcon.Error);
                 return;
             }
 
@@ -251,7 +299,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
             }
             catch (Exception ex)
             {
-                Notify("The system proxy could not be restored", ex.Message, ToolTipIcon.Error);
+                Notify(TrayStrings.T("notify.systemProxyRestoreFailed.title"), ex.Message, ToolTipIcon.Error);
                 return;
             }
 
@@ -264,7 +312,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         var wanted = !_autostartItem.Checked;
         if (!Autostart.TrySet(wanted))
         {
-            Notify("Startup could not be changed", "Windows refused the change to the per-user Run key.", ToolTipIcon.Warning);
+            Notify(TrayStrings.T("notify.autostartFailed.title"), TrayStrings.T("notify.autostartFailed.message"), ToolTipIcon.Warning);
             return;
         }
 
@@ -273,15 +321,28 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
     // ── Helpers ──────────────────────────────────────────────────────────────
 
-    private string DescribeRunningState()
-        => _core.MixedPort != 0
-            ? $"Running — mixed port {_core.MixedPort}"
-            : "Running — no mixed port configured";
+    /// <summary>
+    /// The "running" status is described by a key plus its argument rather than a
+    /// finished sentence, so a language switch re-renders it.
+    /// </summary>
+    private void SetRunningState() => SetStatus(_core.MixedPort != 0 ? "status.runningMixed" : "status.runningNoPort", _core.MixedPort);
 
-    private void SetStatus(string text)
+    private void SetStatus(string key, params object?[] args)
     {
+        _statusKey = key;
+        _statusArgs = args;
+        RenderStatus();
+    }
+
+    /// <summary>Renders the remembered status in the active language.</summary>
+    private void RenderStatus()
+    {
+        var text = TrayStrings.T(_statusKey, _statusArgs);
         _statusItem.Text = text;
-        _tray.Text = text.Length <= 63 ? $"Clash for .NET — {text}" : "Clash for .NET";
+
+        // The shell caps a tray tooltip at 63 characters.
+        var app = TrayStrings.T("app.name");
+        _tray.Text = app.Length + 3 + text.Length <= 63 ? $"{app} — {text}" : app;
     }
 
     private void Notify(string title, string message, ToolTipIcon icon)
