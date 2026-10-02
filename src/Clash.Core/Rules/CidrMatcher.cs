@@ -318,9 +318,11 @@ public sealed class CidrMatcher
         var target = new byte[source.Length];
         var bits = source.Length * 8;
 
+        // Bit i of the result is bit (bits - 1 - i) of the source, so the low bits of an
+        // address become the leading bits of a prefix walk.
         for (var i = 0; i < bits; i++)
         {
-            if (BitAt(source, i) != 0) target[i >> 3] |= (byte)(1 << (7 - (i & 7)));
+            if (BitAt(source, bits - 1 - i) != 0) target[i >> 3] |= (byte)(1 << (7 - (i & 7)));
         }
 
         return target;

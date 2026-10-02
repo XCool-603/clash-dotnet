@@ -39,7 +39,7 @@ public sealed class LogicalRule : IRule, ICanonicalRule, IGeoDataConsumer
     public IReadOnlyList<IRule> Members => _members;
 
     /// <inheritdoc />
-    public string Payload => string.Join(',', _members.Select(m => $"({RuleParser.FormatNested(m)})"));
+    public string Payload => $"({string.Join(',', _members.Select(m => $"({RuleParser.FormatNested(m)})"))})";
 
     /// <inheritdoc />
     public string Adapter { get; }
@@ -83,7 +83,7 @@ public sealed class LogicalRule : IRule, ICanonicalRule, IGeoDataConsumer
     }
 
     /// <inheritdoc />
-    string ICanonicalRule.FormatRule(bool withAdapter)
+    public string FormatRule(bool withAdapter)
         => Canonical.Line(RuleTypeName, Payload, Adapter, AdditionalPayload, withAdapter);
 
     private bool MatchAll(Metadata metadata)

@@ -282,20 +282,21 @@ public sealed class DnsCodecTests
     [Fact]
     public void DecodeFollowsChainedCompressionPointers()
     {
-        // question name at 12..20; a second name at 25 is "www" + pointer to 12;
-        // the answer name points at 25, so decoding takes two hops.
+        // The answer name at offset 25 is "www" followed by a pointer to the
+        // question name at 12, so decoding takes two hops.
         var wire = new Wire()
             .U16(0x1234).U16(0x8180)
             .U16(1).U16(1).U16(0).U16(0)
             .Name("foo.com").U16(1).U16(1)
             .Raw(3, (byte)'w', (byte)'w', (byte)'w', 0xC0, 0x0C)
-            .U16(0xC019).U16(1).U16(1).U32(60).U16(4).Raw(1, 2, 3, 4)
+            .U16(1).U16(1).U32(60).U16(4).Raw(1, 2, 3, 4)
             .ToArray();
 
         var decoded = _codec.Decode(wire);
 
         var record = Assert.Single(decoded.Answers);
         Assert.Equal("www.foo.com", record.Name);
+        Assert.Equal(IPAddress.Parse("1.2.3.4"), record.Address);
     }
 
     [Fact(Timeout = 5000)]

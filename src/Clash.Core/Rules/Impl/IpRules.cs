@@ -75,7 +75,7 @@ public sealed class IpCidrRule : IRule, ICanonicalRule
     public string Description => FormatRule(true);
 
     /// <inheritdoc />
-    string ICanonicalRule.FormatRule(bool withAdapter)
+    public string FormatRule(bool withAdapter)
         => Canonical.Line(RuleTypeName, Payload, Adapter, AdditionalPayload, withAdapter);
 
     /// <inheritdoc />
@@ -149,7 +149,7 @@ public sealed class IpSuffixRule : IRule, ICanonicalRule
     public string? AdditionalPayload => Modifiers.Raw.Length == 0 ? null : Modifiers.Raw;
 
     /// <inheritdoc />
-    string ICanonicalRule.FormatRule(bool withAdapter)
+    public string FormatRule(bool withAdapter)
         => Canonical.Line(RuleTypeName, _payload, Adapter, AdditionalPayload, withAdapter);
 }
 
@@ -220,7 +220,7 @@ public sealed class IpAsnRule : IRule, ICanonicalRule, IGeoDataConsumer
     public void SetGeo(IGeoData geo) => Geo = geo ?? GeoData.Empty;
 
     /// <inheritdoc />
-    string ICanonicalRule.FormatRule(bool withAdapter)
+    public string FormatRule(bool withAdapter)
         => Canonical.Line(RuleTypeName, Payload, Adapter, AdditionalPayload, withAdapter);
 
     private bool Test(IPAddress address)

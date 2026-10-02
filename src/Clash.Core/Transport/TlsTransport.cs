@@ -27,8 +27,16 @@ namespace Clash.Core.Transport;
 /// </summary>
 public sealed class TlsTransport : ITransportLayer
 {
-    /// <summary>ALPN protocols used when the configuration does not name any.</summary>
-    public static readonly string[] DefaultAlpn = ["h2", "http/1.1"];
+    /// <summary>
+    /// ALPN offered when the configuration names none: none at all.
+    /// <para>
+    /// A default like <c>h2, http/1.1</c> rewrites the ClientHello and breaks
+    /// protocols whose servers expect an empty ALPN list — anytls is one. The
+    /// layers that genuinely need ALPN already set it in
+    /// <see cref="TransportComposer"/> (grpc and h2 force h2).
+    /// </para>
+    /// </summary>
+    public static readonly string[] DefaultAlpn = [];
 
     public string Name => "tls";
 
@@ -80,7 +88,7 @@ public sealed class TlsTransport : ITransportLayer
         CancellationToken cancellationToken)
     {
         var targetHost = ResolveTargetHost(inner, context, tls);
-        var protocols = tls.Alpn.Count > 0 ? tls.Alpn : [.. DefaultAlpn];
+        IReadOnlyList<string> protocols = tls.Alpn.Count > 0 ? tls.Alpn : DefaultAlpn;
 
         var ssl = new SslStream(
             inner.Inner,
@@ -90,7 +98,13 @@ public sealed class TlsTransport : ITransportLayer
         var authOptions = new SslClientAuthenticationOptions
         {
             TargetHost = targetHost,
-            ApplicationProtocols = [.. protocols.Select(static p => new SslApplicationProtocol(p))],
+            // Null means "send no ALPN extension", which is not the same as an
+            // empty array: protocols whose servers expect no ALPN at all (anytls)
+            // must not see the extension, while the layers that genuinely need it
+            // already set it in TransportComposer (grpc and h2 force h2).
+            ApplicationProtocols = protocols.Count > 0
+                ? [.. protocols.Select(static p => new SslApplicationProtocol(p))]
+                : null,
             EnabledSslProtocols = SslProtocols.None,
             CertificateRevocationCheckMode = X509RevocationMode.NoCheck,
             AllowRenegotiation = false,

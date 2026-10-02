@@ -412,8 +412,16 @@ public sealed class ShadowsocksAeadReader
 
         if (length == 0)
         {
-            // A legal empty chunk: consume its tag and keep reading.
-            _ = ShadowsocksAeadFraming.TryReadPayload(_cipher, _subkey, ref _counter, _emptyChunkBuffer, 0, Span<byte>.Empty);
+            // A legal empty chunk: consume its tag and keep reading. The tag is
+            // still on the wire, so it must be read before the next length block
+            // or the stream desynchronises.
+            var tag = _emptyChunkBuffer.AsSpan(0, _cipher.TagSize);
+            if (!ReadExactly(tag)) return false;
+            if (!ShadowsocksAeadFraming.TryReadPayload(_cipher, _subkey, ref _counter, tag, 0, Span<byte>.Empty))
+            {
+                throw new ClashException("shadowsocks: chunk payload failed authentication");
+            }
+
             ChunkCount++;
             _chunkOffset = 0;
             _chunkLength = 0;
@@ -444,7 +452,14 @@ public sealed class ShadowsocksAeadReader
 
         if (length == 0)
         {
-            _ = ShadowsocksAeadFraming.TryReadPayload(_cipher, _subkey, ref _counter, _emptyChunkBuffer, 0, Span<byte>.Empty);
+            // See the synchronous path: the empty chunk still carries a tag.
+            var tag = _emptyChunkBuffer.AsMemory(0, _cipher.TagSize);
+            if (!await ReadExactlyAsync(tag, cancellationToken).ConfigureAwait(false)) return false;
+            if (!ShadowsocksAeadFraming.TryReadPayload(_cipher, _subkey, ref _counter, tag.Span, 0, Span<byte>.Empty))
+            {
+                throw new ClashException("shadowsocks: chunk payload failed authentication");
+            }
+
             ChunkCount++;
             _chunkOffset = 0;
             _chunkLength = 0;
@@ -464,7 +479,8 @@ public sealed class ShadowsocksAeadReader
         return true;
     }
 
-    private static readonly byte[] _emptyChunkBuffer = new byte[16];
+    /// <summary>Scratch space for the tag of an empty chunk; per instance, never shared.</summary>
+    private readonly byte[] _emptyChunkBuffer = new byte[16];
 
     private bool ReadExactly(Span<byte> destination)
     {

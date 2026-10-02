@@ -58,11 +58,16 @@ public static class ClashHost
             WebRootPath = Directory.Exists(webRoot) ? webRoot : null,
         });
 
+        // `AddApplicationPart` matters when the host is not the entry assembly
+        // (the xunit test host, or a shell that re-hosts this one): controller
+        // discovery starts from the entry assembly, so without it every control
+        // API route answers 404.
         builder.Services.AddControllers()
+            .AddApplicationPart(typeof(ClashHost).Assembly)
             .AddJsonOptions(o =>
             {
                 o.JsonSerializerOptions.DefaultIgnoreCondition = Json.DefaultIgnoreCondition;
-                o.JsonSerializerOptions.PropertyNamingPolicy = Json.NamingPolicy;
+                o.JsonSerializerOptions.PropertyNamingPolicy = Json.PropertyNamingPolicy;
                 o.JsonSerializerOptions.NumberHandling = Json.NumberHandling;
             });
 
@@ -82,6 +87,15 @@ public static class ClashHost
         builder.Services.AddSingleton<ClashService>();
         builder.Services.AddSingleton<IHostedService>(services => services.GetRequiredService<ClashService>());
 
+        // Bind the control API where `external-controller` says, so clients reach
+        // the address the configuration advertises. Best effort: an unreadable or
+        // missing configuration leaves the default (or an explicit --urls) alone.
+        if (string.IsNullOrEmpty(builder.Configuration["urls"]) &&
+            TryReadExternalController(args) is { } externalController)
+        {
+            builder.WebHost.UseUrls($"http://{externalController}");
+        }
+
         configure?.Invoke(builder);
 
         var app = builder.Build();
@@ -95,7 +109,6 @@ public static class ClashHost
             }
             catch (Exception ex) when (!context.Response.HasStarted)
             {
-                context.Response.Clear();
                 context.Response.StatusCode = StatusCodes.Status500InternalServerError;
                 await context.Response
                     .WriteAsJsonAsync(new MessageResponse { Message = ex.Message }, Json, context.RequestAborted)
@@ -108,7 +121,11 @@ public static class ClashHost
 
         // The dashboard shell stays reachable without a token so it can prompt for
         // the secret; every control API route goes through the auth middleware.
-        app.UseDefaultFiles();
+        //
+        // Deliberately no `UseDefaultFiles()`: it would rewrite `/` to
+        // `/index.html` and shadow the API's own `GET /` greeting, which Clash
+        // clients (and this repository's smoke test) rely on. The dashboard has a
+        // canonical URL of its own, `/ui`, which the SPA fallback below serves.
         app.UseStaticFiles();
         app.UseRouting();
 
@@ -170,6 +187,44 @@ public static class ClashHost
 
     private static bool AcceptsHtml(HttpRequest request)
         => request.Headers.Accept.ToString().Contains("text/html", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Reads <c>external-controller</c> from the configuration named on the command
+    /// line. Returns null when there is no configuration, when it cannot be parsed,
+    /// or when the value is not a usable <c>host:port</c>.
+    /// </summary>
+    private static string? TryReadExternalController(string[] args)
+    {
+        try
+        {
+            var (configPath, homeDir) = ClashService.ParseArguments(args);
+            var home = string.IsNullOrWhiteSpace(homeDir)
+                ? Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                    ".config",
+                    "clash")
+                : homeDir!;
+
+            var path = Clash.Core.Runtime.ClashRuntime.ResolveConfigPath(configPath, home);
+            if (path is null || !File.Exists(path)) return null;
+
+            var value = Clash.Core.Configuration.YamlReader
+                .Parse(File.ReadAllText(path))
+                .GetNonEmptyString("external-controller");
+
+            if (string.IsNullOrWhiteSpace(value)) return null;
+
+            // `:9090` means "every interface", like Clash.
+            var trimmed = value.Trim();
+            if (trimmed.StartsWith(':')) trimmed = "0.0.0.0" + trimmed;
+
+            return trimmed.Contains(':') ? trimmed : null;
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
 
     private static string? ResolveIndexHtml(WebApplication app)
     {

@@ -253,7 +253,7 @@ public class ProxyGroupTests
         for (var i = 0; i < 10; i++) await group.DialTcpAsync(Flow("stable.example.com"));
 
         // Every flow for the same host lands on exactly one node.
-        Assert.Single(members.Where(m => m.Dialled.Count > 0));
+        Assert.Single(members, m => m.Dialled.Count > 0);
         Assert.Equal(10, members.Sum(m => m.Dialled.Count));
     }
 

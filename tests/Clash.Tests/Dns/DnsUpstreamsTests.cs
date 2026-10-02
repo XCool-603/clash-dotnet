@@ -19,7 +19,7 @@ public sealed class DnsUpstreamsTests
     [InlineData("hosts://", typeof(SystemHostsDnsUpstream))]
     public void CreatePicksTheTransportForEachScheme(string nameserver, Type expected)
     {
-        using var upstream = (IDisposable)DnsUpstreams.Create(nameserver);
+        using var upstream = DnsUpstreams.Create(nameserver);
 
         Assert.IsType(expected, upstream);
     }
@@ -27,7 +27,7 @@ public sealed class DnsUpstreamsTests
     [Fact]
     public void DomainNameserversAreWrappedInABootstrapUpstream()
     {
-        using var upstream = (IDisposable)DnsUpstreams.Create("tls://dns.google");
+        using var upstream = DnsUpstreams.Create("tls://dns.google");
 
         var bootstrap = Assert.IsType<BootstrapDnsUpstream>(upstream);
         Assert.Equal("dns.google", bootstrap.Host);
@@ -37,7 +37,7 @@ public sealed class DnsUpstreamsTests
     [Fact]
     public void H3PathsAreNormalisedOffTheHost()
     {
-        using var upstream = (IDisposable)DnsUpstreams.Create("h3://1.1.1.1/dns-query");
+        using var upstream = DnsUpstreams.Create("h3://1.1.1.1/dns-query");
 
         var doh = Assert.IsType<HttpsDnsUpstream>(upstream);
         Assert.Equal("1.1.1.1", doh.Hostname);
@@ -47,7 +47,7 @@ public sealed class DnsUpstreamsTests
     [Fact]
     public void HttpsKeepsItsConfiguredPath()
     {
-        using var upstream = (IDisposable)DnsUpstreams.Create("https://1.1.1.1/custom-query");
+        using var upstream = DnsUpstreams.Create("https://1.1.1.1/custom-query");
 
         var doh = Assert.IsType<HttpsDnsUpstream>(upstream);
         Assert.Equal("/custom-query", doh.Uri.AbsolutePath);
@@ -56,7 +56,7 @@ public sealed class DnsUpstreamsTests
     [Fact]
     public void HttpsWithoutAPathUsesTheDefault()
     {
-        using var upstream = (IDisposable)DnsUpstreams.Create("https://1.1.1.1");
+        using var upstream = DnsUpstreams.Create("https://1.1.1.1");
 
         var doh = Assert.IsType<HttpsDnsUpstream>(upstream);
         Assert.Equal(DnsUpstreams.DefaultDohPath, doh.Uri.AbsolutePath);
@@ -77,7 +77,7 @@ public sealed class DnsUpstreamsTests
     [Fact]
     public void BootstrapListDoesNotChangeAnIpLiteralNameserver()
     {
-        using var upstream = (IDisposable)DnsUpstreams.Create("1.1.1.1", ["8.8.8.8", "1.0.0.1"], ipv6: false, bootstrapResolver: null);
+        using var upstream = DnsUpstreams.Create("1.1.1.1", ["8.8.8.8", "1.0.0.1"], ipv6: false, bootstrapResolver: null);
 
         Assert.IsType<UdpDnsUpstream>(upstream);
     }
@@ -87,7 +87,7 @@ public sealed class DnsUpstreamsTests
     {
         // "dns.google" cannot bootstrap itself, so it is skipped and the
         // upstream stays lazy until it is first used.
-        using var upstream = (IDisposable)DnsUpstreams.Create("tls://example.invalid", ["dns.google"], ipv6: false, bootstrapResolver: null);
+        using var upstream = DnsUpstreams.Create("tls://example.invalid", ["dns.google"], ipv6: false, bootstrapResolver: null);
 
         Assert.IsType<BootstrapDnsUpstream>(upstream);
     }
@@ -198,9 +198,9 @@ public sealed class DnsUpstreamsTests
     [Fact]
     public void UpstreamNamesDescribeTheEndpoint()
     {
-        using var udp = (IDisposable)DnsUpstreams.Create("1.1.1.1");
-        using var tcp = (IDisposable)DnsUpstreams.Create("tcp://1.1.1.1:5353");
-        using var tls = (IDisposable)DnsUpstreams.Create("tls://[2606:4700:4700::1111]:853");
+        using var udp = DnsUpstreams.Create("1.1.1.1");
+        using var tcp = DnsUpstreams.Create("tcp://1.1.1.1:5353");
+        using var tls = DnsUpstreams.Create("tls://[2606:4700:4700::1111]:853");
 
         Assert.Equal("udp://1.1.1.1:53", udp.Name);
         Assert.Equal("tcp://1.1.1.1:5353", tcp.Name);

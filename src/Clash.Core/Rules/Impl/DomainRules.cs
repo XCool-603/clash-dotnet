@@ -77,6 +77,6 @@ public sealed class DomainRule : IRule, ICanonicalRule
     }
 
     /// <inheritdoc />
-    string ICanonicalRule.FormatRule(bool withAdapter)
+    public string FormatRule(bool withAdapter)
         => Canonical.Line(RuleTypeName, _payload, Adapter, AdditionalPayload, withAdapter);
 }

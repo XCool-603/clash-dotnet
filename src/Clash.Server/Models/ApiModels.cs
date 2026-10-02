@@ -94,6 +94,9 @@ public sealed class ConnectionMetadata
     /// <summary>Port of the inbound listener.</summary>
     public string InboundPort { get; init; } = string.Empty;
 
+    /// <summary>Authenticated user the inbound flow belongs to, when the listener required one.</summary>
+    public string InboundUser { get; init; } = string.Empty;
+
     /// <summary>Unix user id of the owning process, when known.</summary>
     public int Uid { get; init; }
 

@@ -9,6 +9,9 @@ namespace Clash.Core.Tunnel;
 /// </summary>
 public sealed class PeekableStream : Stream
 {
+    /// <summary>How long to wait after a zero-length read before trying again.</summary>
+    private static readonly TimeSpan ZeroReadBackoff = TimeSpan.FromMilliseconds(10);
+
     private readonly Stream _inner;
     private readonly int _capacity;
     private byte[] _buffer;
@@ -31,11 +34,17 @@ public sealed class PeekableStream : Stream
     /// Reads until at least <paramref name="count"/> bytes are buffered, the
     /// stream ends, or <paramref name="timeout"/> elapses. Returns the number of
     /// buffered bytes. A timeout is not an error: sniffing is best effort.
+    /// <para>
+    /// The buffer grows past its initial capacity to hold <paramref name="count"/>
+    /// bytes, and a zero-length read does not end the window: it can mean "nothing
+    /// yet" just as much as "end of stream", and a client that has connected is
+    /// usually about to send its ClientHello.
+    /// </para>
     /// </summary>
     public async ValueTask<int> PeekAsync(int count, TimeSpan timeout, CancellationToken cancellationToken)
     {
         var deadline = DateTime.UtcNow + timeout;
-        var target = Math.Min(count, _capacity);
+        var target = Math.Max(0, count);
 
         while (BufferedCount < target)
         {
@@ -63,7 +72,14 @@ public sealed class PeekableStream : Stream
                 break;
             }
 
-            if (read <= 0) break;
+            if (read <= 0)
+            {
+                // Back off instead of spinning, then let the loop decide whether
+                // the window is still open.
+                await Task.Delay(ZeroReadBackoff, cancellationToken).ConfigureAwait(false);
+                continue;
+            }
+
             _end += read;
         }
 

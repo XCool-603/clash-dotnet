@@ -106,7 +106,7 @@ public sealed class DnsListenerTests
         await using var listener = new DnsListener(config, NullLogger<DnsListener>.Instance);
         await listener.StartAsync(new FakeTunnel(resolver));
 
-        var response = Codec.CreateResponse(DnsMessage.CreateQuery("example.com", DnsQueryType.A, 1), DnsResponseCode.NoError);
+        var response = DnsCodec.CreateResponse(DnsMessage.CreateQuery("example.com", DnsQueryType.A, 1), DnsResponseCode.NoError);
         var replied = false;
 
         await listener.HandlePacketAsync(

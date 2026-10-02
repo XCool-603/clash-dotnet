@@ -20,17 +20,35 @@ const props = withDefaults(
     labels: string[]
     /** In-use memory samples, bytes. */
     values: number[]
+    /** Epoch-ms sample times — switches the chart to a real datetime axis. */
+    timestamps?: number[]
     /** OS limit, bytes (0 when unknown). */
     limit?: number
     height?: number
   }>(),
-  { limit: 0, height: 200 },
+  { timestamps: () => [], limit: 0, height: 200 },
 )
 
 const MEMORY_COLOR = '#14b8a6'
 
 const settings = useSettingsStore()
 const isDark = computed<boolean>(() => settings.theme === 'dark')
+
+const hasTimeAxis = computed<boolean>(
+  () => props.timestamps.length > 0 && props.timestamps.length === props.values.length,
+)
+
+const windowStart = computed<number | undefined>(() =>
+  hasTimeAxis.value ? props.timestamps[0] : undefined,
+)
+const windowEnd = computed<number | undefined>(() =>
+  hasTimeAxis.value ? props.timestamps[props.timestamps.length - 1] : undefined,
+)
+
+function seriesData(): number[] | [number, number][] {
+  if (!hasTimeAxis.value) return props.values
+  return props.values.map((value, index) => [props.timestamps[index] ?? 0, value] as [number, number])
+}
 
 const axisColor = computed<string>(() => (isDark.value ? '#6b7280' : '#98a2b3'))
 const splitColor = computed<string>(() =>
@@ -48,14 +66,31 @@ const option = computed<MemoryChartOption>(() => ({
     textStyle: { color: isDark.value ? '#e6edf3' : '#1f2329', fontSize: 12 },
     valueFormatter: (value: unknown) => formatBytes(Number(value)),
   },
-  xAxis: {
-    type: 'category',
-    boundaryGap: false,
-    data: props.labels,
-    axisLine: { lineStyle: { color: splitColor.value } },
-    axisTick: { show: false },
-    axisLabel: { color: axisColor.value, fontSize: 11, hideOverlap: true },
-  },
+  xAxis: hasTimeAxis.value
+    ? {
+        type: 'time',
+        // A time axis takes no boolean `boundaryGap`; the window is fixed by
+        // `min`/`max` instead.
+        min: windowStart.value,
+        max: windowEnd.value,
+        axisLine: { lineStyle: { color: splitColor.value } },
+        axisTick: { show: false },
+        axisLabel: {
+          color: axisColor.value,
+          fontSize: 11,
+          hideOverlap: true,
+          formatter: '{HH}:{mm}:{ss}',
+        },
+        splitLine: { show: false },
+      }
+    : {
+        type: 'category',
+        boundaryGap: false,
+        data: props.labels,
+        axisLine: { lineStyle: { color: splitColor.value } },
+        axisTick: { show: false },
+        axisLabel: { color: axisColor.value, fontSize: 11, hideOverlap: true },
+      },
   yAxis: {
     type: 'value',
     axisLine: { show: false },
@@ -73,7 +108,7 @@ const option = computed<MemoryChartOption>(() => ({
       type: 'line',
       smooth: true,
       showSymbol: false,
-      data: props.values,
+      data: seriesData(),
       lineStyle: { width: 2, color: MEMORY_COLOR },
       itemStyle: { color: MEMORY_COLOR },
       areaStyle: {

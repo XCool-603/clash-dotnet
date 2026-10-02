@@ -28,9 +28,9 @@ public sealed class GeoIpRule : IRule, ICanonicalRule, IGeoDataConsumer
         Type = type;
         RuleTypeName = RuleNames.Of(type);
         Code = code.Trim().ToUpperInvariant();
-        _source = source || type == RuleType.SrcGeoIp;
         Adapter = adapter;
         Modifiers = modifiers ?? RuleModifiers.None;
+        _source = source || type == RuleType.SrcGeoIp || Modifiers.Src;
     }
 
     /// <inheritdoc />
@@ -84,7 +84,7 @@ public sealed class GeoIpRule : IRule, ICanonicalRule, IGeoDataConsumer
     public void SetGeo(IGeoData geo) => Geo = geo ?? GeoData.Empty;
 
     /// <inheritdoc />
-    string ICanonicalRule.FormatRule(bool withAdapter)
+    public string FormatRule(bool withAdapter)
         => Canonical.Line(RuleTypeName, Payload, Adapter, AdditionalPayload, withAdapter);
 
     private bool Test(IPAddress address)
@@ -203,7 +203,7 @@ public sealed class GeoSiteRule : IRule, ICanonicalRule, IGeoDataConsumer
     public void SetGeo(IGeoData geo) => Geo = geo ?? GeoData.Empty;
 
     /// <inheritdoc />
-    string ICanonicalRule.FormatRule(bool withAdapter)
+    public string FormatRule(bool withAdapter)
         => Canonical.Line(RuleTypeName, Payload, Adapter, AdditionalPayload, withAdapter);
 
     private bool MatchCidrs(IGeoSiteMatcherProvider provider, Metadata metadata)

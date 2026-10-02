@@ -84,11 +84,11 @@ public sealed class FakeIpPool
 
     /// <summary>
     /// Returns the address standing for <paramref name="host"/>, allocating one
-    /// when the host is new. <paramref name="ipv6"/> selects the pool;
-    /// <paramref name="preferred"/> is honoured when it lies inside that pool and
-    /// is still free.
+    /// when the host is new. <paramref name="preferred"/> is honoured when it
+    /// lies inside the pool for its family and is still free; <paramref name="ipv6"/>
+    /// selects the IPv6 pool when there is no usable hint.
     /// </summary>
-    public IPAddress? Allocate(string host, bool ipv6 = false, IPAddress? preferred = null)
+    public IPAddress? Allocate(string host, IPAddress? preferred = null, bool ipv6 = false)
     {
         var key = Normalize(host);
         if (key.Length == 0) return null;

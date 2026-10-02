@@ -1,5 +1,7 @@
 /** Byte / rate / duration / timestamp formatting helpers. */
 
+import { latencyBand } from './delay'
+
 const BYTE_UNITS = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'] as const
 
 /**
@@ -100,16 +102,17 @@ function toDate(value: string | number | Date | null | undefined): Date | null {
 export type DelayLevel = 'good' | 'fair' | 'poor' | 'bad' | 'failed' | 'unknown'
 
 /**
- * Classify a delay for colour coding:
- * green ≤ 200ms, yellow ≤ 500ms, orange ≤ 1000ms, red above / failed.
+ * Classify a delay for colour coding.
+ *
+ * Thresholds are **protocol aware** (see `@/utils/delay`): a plain-HTTP probe
+ * is green ≤ 200 ms / yellow ≤ 500 ms / red above, while an HTTPS probe pays a
+ * TLS handshake and gets green ≤ 800 ms / yellow ≤ 1500 ms / red above. Pass
+ * the probe URL when it is known; the HTTP thresholds are the default.
  */
-export function delayLevel(delay: number | null | undefined): DelayLevel {
-  if (delay === null || delay === undefined || !Number.isFinite(delay)) return 'unknown'
-  if (delay <= 0) return 'failed'
-  if (delay <= 200) return 'good'
-  if (delay <= 500) return 'fair'
-  if (delay <= 1000) return 'poor'
-  return 'bad'
+export function delayLevel(delay: number | null | undefined, probeUrl?: string | null): DelayLevel {
+  const band = latencyBand(delay, probeUrl)
+  if (band === 'failed') return 'failed'
+  return band
 }
 
 const DELAY_COLORS: Record<DelayLevel, string> = {
@@ -121,8 +124,8 @@ const DELAY_COLORS: Record<DelayLevel, string> = {
   unknown: '#94a3b8',
 }
 
-export function delayColor(delay: number | null | undefined): string {
-  return DELAY_COLORS[delayLevel(delay)]
+export function delayColor(delay: number | null | undefined, probeUrl?: string | null): string {
+  return DELAY_COLORS[delayLevel(delay, probeUrl)]
 }
 
 /** Turn `#rrggbb` into `rgba(r, g, b, a)`. */

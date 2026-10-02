@@ -54,7 +54,7 @@ public sealed class RuleSetRule : IRule, ICanonicalRule, IGeoDataConsumer
     public void SetGeo(IGeoData geo) => RuleGeo.Inject(RuleSet, geo);
 
     /// <inheritdoc />
-    string ICanonicalRule.FormatRule(bool withAdapter)
+    public string FormatRule(bool withAdapter)
         => Canonical.Line("RULE-SET", RuleSet.Name, Adapter, AdditionalPayload, withAdapter);
 }
 
@@ -115,6 +115,6 @@ public sealed class SubRuleRule : IRule, ICanonicalRule, IGeoDataConsumer
     public void SetGeo(IGeoData geo) => RuleGeo.Inject(RuleSet, geo);
 
     /// <inheritdoc />
-    string ICanonicalRule.FormatRule(bool withAdapter)
+    public string FormatRule(bool withAdapter)
         => Canonical.Line("SUB-RULE", $"({Name})", Adapter, AdditionalPayload, withAdapter);
 }

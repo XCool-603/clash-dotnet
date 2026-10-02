@@ -80,6 +80,7 @@ public static class SubscriptionConverter
     public static string QuoteIfNeeded(string value)
     {
         ArgumentNullException.ThrowIfNull(value);
+        if (value.Length == 0) return "''";
         return NeedsQuoting(value) ? Quote(value) : value;
     }
 
@@ -180,7 +181,10 @@ public static class SubscriptionConverter
         {
             builder.Append(indent).Append(first ? "- " : "  ");
             builder.Append(key).Append(':');
-            WriteInline(builder, value, indent + "  ");
+
+            // Both prefixes are two columns wide, so a nested block sits one level
+            // deeper than the key line either way.
+            WriteInline(builder, value, indent + "    ");
             builder.Append('\n');
             first = false;
         }

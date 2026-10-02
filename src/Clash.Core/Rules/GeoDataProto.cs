@@ -267,7 +267,7 @@ internal static class GeoDataFiles
     private static bool TryParseCidr(ReadOnlySpan<byte> data, out IpPrefix prefix)
     {
         prefix = default;
-        ReadOnlySpan<byte> address = default;
+        byte[]? address = null;
         var bits = 0;
         var offset = 0;
 
@@ -275,7 +275,8 @@ internal static class GeoDataFiles
         {
             if (field == 1 && wire == 2)
             {
-                if (!ProtoReader.TryReadLengthDelimited(data, ref offset, out address)) return false;
+                if (!ProtoReader.TryReadLengthDelimited(data, ref offset, out var slice)) return false;
+                address = slice.ToArray();
                 continue;
             }
 
@@ -289,7 +290,7 @@ internal static class GeoDataFiles
             if (!ProtoReader.TrySkip(data, ref offset, wire)) return false;
         }
 
-        if (address.Length is not (4 or 16)) return false;
+        if (address is not { Length: 4 or 16 }) return false;
 
         var maxBits = address.Length * 8;
         if (bits < 0 || bits > maxBits) bits = maxBits;

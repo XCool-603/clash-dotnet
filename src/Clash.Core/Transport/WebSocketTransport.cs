@@ -2,6 +2,7 @@ using System.Buffers.Binary;
 using System.Security.Cryptography;
 using System.Text;
 using Clash.Core.Common;
+using Clash.Core.Crypto;
 
 namespace Clash.Core.Transport;
 
@@ -348,7 +349,7 @@ public sealed class WebSocketStream : Stream
     private readonly int _port;
     private readonly bool _maskOutgoing;
     private readonly string _key = WebSocketFraming.CreateKey();
-    private readonly byte[] _readBuffer = new byte[8192];
+    private byte[] _readBuffer = new byte[8192];
     private readonly byte[] _frameHeader = new byte[14];
     private byte[] _sendBuffer = new byte[OutgoingChunkSize + 14];
     private readonly byte[] _maskKeyBytes = new byte[4];
@@ -392,8 +393,11 @@ public sealed class WebSocketStream : Stream
     }
 
     /// <summary>Performs the handshake with no early data.</summary>
-    public ValueTask HandshakeAsync(CancellationToken cancellationToken = default)
-        => _handshakeCompleted ? ValueTask.CompletedTask : SendHandshakeAsync(ReadOnlyMemory<byte>.Empty, cancellationToken);
+    public async ValueTask HandshakeAsync(CancellationToken cancellationToken = default)
+    {
+        if (_handshakeCompleted) return;
+        await SendHandshakeAsync(ReadOnlyMemory<byte>.Empty, cancellationToken).ConfigureAwait(false);
+    }
 
     public override void Flush() => _inner.Flush();
 

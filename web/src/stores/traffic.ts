@@ -3,8 +3,8 @@ import { defineStore } from 'pinia'
 
 import type { StreamStatus } from '@/utils/ws'
 
-/** Number of one-second samples kept in the sliding window (~120s). */
-export const TRAFFIC_WINDOW = 120
+/** Number of one-second samples kept in the sliding window (~2.5 minutes). */
+export const TRAFFIC_WINDOW = 150
 
 function pad(value: number): string {
   return String(value).padStart(2, '0')
@@ -23,12 +23,15 @@ export const useTrafficStore = defineStore('traffic', () => {
   const downSeries = ref<number[]>([])
   const upSeries = ref<number[]>([])
   const labels = ref<string[]>([])
+  /** Epoch-ms sample times — drives the charts' real datetime axis. */
+  const timestamps = ref<number[]>([])
 
   const currentUp = ref(0)
   const currentDown = ref(0)
 
   const memorySeries = ref<number[]>([])
   const memoryLabels = ref<string[]>([])
+  const memoryTimestamps = ref<number[]>([])
   const memoryInuse = ref(0)
   const memoryLimit = ref(0)
 
@@ -47,32 +50,40 @@ export const useTrafficStore = defineStore('traffic', () => {
     currentUp.value = up
     currentDown.value = down
 
-    const label = clockLabel(new Date())
+    const now = Date.now()
+    const label = clockLabel(new Date(now))
 
     const nextUp = upSeries.value.concat(up)
     const nextDown = downSeries.value.concat(down)
     const nextLabels = labels.value.concat(label)
+    const nextTimes = timestamps.value.concat(now)
 
     while (nextUp.length > TRAFFIC_WINDOW) nextUp.shift()
     while (nextDown.length > TRAFFIC_WINDOW) nextDown.shift()
     while (nextLabels.length > TRAFFIC_WINDOW) nextLabels.shift()
+    while (nextTimes.length > TRAFFIC_WINDOW) nextTimes.shift()
 
     upSeries.value = nextUp
     downSeries.value = nextDown
     labels.value = nextLabels
+    timestamps.value = nextTimes
   }
 
   function pushMemory(inuse: number, oslimit: number): void {
     memoryInuse.value = inuse
     memoryLimit.value = oslimit
 
+    const now = Date.now()
     const next = memorySeries.value.concat(inuse)
-    const nextLabels = memoryLabels.value.concat(clockLabel(new Date()))
+    const nextLabels = memoryLabels.value.concat(clockLabel(new Date(now)))
+    const nextTimes = memoryTimestamps.value.concat(now)
     while (next.length > TRAFFIC_WINDOW) next.shift()
     while (nextLabels.length > TRAFFIC_WINDOW) nextLabels.shift()
+    while (nextTimes.length > TRAFFIC_WINDOW) nextTimes.shift()
 
     memorySeries.value = next
     memoryLabels.value = nextLabels
+    memoryTimestamps.value = nextTimes
   }
 
   function setTrafficStatus(status: StreamStatus): void {
@@ -89,8 +100,10 @@ export const useTrafficStore = defineStore('traffic', () => {
     downSeries.value = []
     upSeries.value = []
     labels.value = []
+    timestamps.value = []
     memorySeries.value = []
     memoryLabels.value = []
+    memoryTimestamps.value = []
     currentUp.value = 0
     currentDown.value = 0
     memoryInuse.value = 0
@@ -102,10 +115,12 @@ export const useTrafficStore = defineStore('traffic', () => {
     downSeries,
     upSeries,
     labels,
+    timestamps,
     currentUp,
     currentDown,
     memorySeries,
     memoryLabels,
+    memoryTimestamps,
     memoryInuse,
     memoryLimit,
     trafficConnected,

@@ -107,7 +107,7 @@ internal sealed class SimpleObfsStream : Stream
 
     public override int Read(Span<byte> buffer)
     {
-        EnsureResponseStrippedAsync(CancellationToken.None).AsTask().GetAwaiter().GetResult();
+        EnsureResponseStripped();
         return (_readSource ?? _inner).Read(buffer);
     }
 
@@ -119,6 +119,22 @@ internal sealed class SimpleObfsStream : Stream
 
     public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
         => ReadAsync(buffer.AsMemory(offset, count), cancellationToken).AsTask();
+
+    /// <summary>Consumes the server's obfuscation header exactly once.</summary>
+    private void EnsureResponseStripped()
+    {
+        if (_responseStripped) return;
+        _responseStripped = true;
+
+        if (_mode == SimpleObfsMode.Http)
+        {
+            var header = ReadUntilSync("\r\n\r\n"u8.ToArray());
+            if (header.Leftover.Length > 0) _readSource = new PrefixStream(header.Leftover, _inner);
+            return;
+        }
+
+        SkipFakeTlsRecordsSync();
+    }
 
     /// <summary>Consumes the server's obfuscation header exactly once.</summary>
     private async ValueTask EnsureResponseStrippedAsync(CancellationToken cancellationToken)
@@ -145,6 +161,51 @@ internal sealed class SimpleObfsStream : Stream
             var body = new byte[length];
             await OutboundIo.ReadExactlyAsync(_inner, body, cancellationToken).ConfigureAwait(false);
             if (record[0] != 0x16) break;
+        }
+    }
+
+    /// <inheritdoc cref="EnsureResponseStripped"/>
+    private void SkipFakeTlsRecordsSync()
+    {
+        while (true)
+        {
+            var record = new byte[5];
+            OutboundIo.ReadExactly(_inner, record);
+            var length = BinaryPrimitives.ReadUInt16BigEndian(record.AsSpan(3));
+            var body = new byte[length];
+            OutboundIo.ReadExactly(_inner, body);
+            if (record[0] != 0x16) break;
+        }
+    }
+
+    /// <inheritdoc cref="OutboundIo.ReadUntilAsync"/>
+    private HeaderRead ReadUntilSync(byte[] terminator)
+    {
+        var buffer = new byte[512];
+        var length = 0;
+
+        while (true)
+        {
+            if (length >= buffer.Length)
+            {
+                if (buffer.Length >= OutboundIo.MaxHeaderBytes)
+                {
+                    throw new ClashException($"outbound: response header exceeded {OutboundIo.MaxHeaderBytes} bytes");
+                }
+
+                Array.Resize(ref buffer, Math.Min(buffer.Length * 2, OutboundIo.MaxHeaderBytes));
+            }
+
+            var read = _inner.Read(buffer.AsSpan(length));
+            if (read <= 0) throw new ClashException("outbound: the peer closed the connection before the response header was complete");
+
+            length += read;
+            var index = buffer.AsSpan(0, length).IndexOf(terminator);
+            if (index >= 0)
+            {
+                var end = index + terminator.Length;
+                return new HeaderRead(buffer[..end], buffer[end..length]);
+            }
         }
     }
 
@@ -232,12 +293,20 @@ internal sealed class ShadowsocksTcpStream : Stream
             case ShadowsocksKind.Aead2022:
             {
                 _writer ??= new ShadowsocksAeadWriter(_inner, _method.Aead!, _method.Key);
-                if (!_headerSent)
+                if (!_headerSent && _header.Length > 0)
                 {
+                    // The address belongs inside the *first* data chunk, exactly as
+                    // the reference implementation frames it: a separate chunk is
+                    // legal on the wire but wastes a whole chunk per connection.
                     _headerSent = true;
-                    if (_header.Length > 0) _writer.Write(_header);
+                    var combined = new byte[_header.Length + buffer.Length];
+                    _header.CopyTo(combined, 0);
+                    buffer.CopyTo(combined.AsSpan(_header.Length));
+                    _writer.Write(combined);
+                    break;
                 }
 
+                _headerSent = true;
                 _writer.Write(buffer);
                 break;
             }
@@ -281,12 +350,18 @@ internal sealed class ShadowsocksTcpStream : Stream
             case ShadowsocksKind.Aead2022:
             {
                 _writer ??= new ShadowsocksAeadWriter(_inner, _method.Aead!, _method.Key);
-                if (!_headerSent)
+                if (!_headerSent && _header.Length > 0)
                 {
+                    // See the synchronous path: the address shares the first chunk.
                     _headerSent = true;
-                    if (_header.Length > 0) await _writer.WriteAsync(_header, cancellationToken).ConfigureAwait(false);
+                    var combined = new byte[_header.Length + buffer.Length];
+                    _header.CopyTo(combined, 0);
+                    buffer.Span.CopyTo(combined.AsSpan(_header.Length));
+                    await _writer.WriteAsync(combined, cancellationToken).ConfigureAwait(false);
+                    break;
                 }
 
+                _headerSent = true;
                 await _writer.WriteAsync(buffer, cancellationToken).ConfigureAwait(false);
                 break;
             }
@@ -340,7 +415,7 @@ internal sealed class ShadowsocksTcpStream : Stream
             case ShadowsocksKind.Aead2022:
             {
                 _reader ??= new ShadowsocksAeadReader(_inner, _method.Aead!, _method.Key);
-                Strip2022ResponseHeaderAsync(CancellationToken.None).AsTask().GetAwaiter().GetResult();
+                Strip2022ResponseHeader();
                 return _reader.Read(buffer);
             }
 
@@ -422,6 +497,38 @@ internal sealed class ShadowsocksTcpStream : Stream
         while (read < destination.Length)
         {
             var n = await reader.ReadAsync(destination[read..], cancellationToken).ConfigureAwait(false);
+            if (n <= 0) throw new ClashException("shadowsocks: the peer closed the connection mid-header");
+            read += n;
+        }
+    }
+
+    /// <inheritdoc cref="Strip2022ResponseHeaderAsync"/>
+    private void Strip2022ResponseHeader()
+    {
+        if (_responseHeaderStripped) return;
+        _responseHeaderStripped = true;
+
+        var reader = _reader ?? throw new InvalidOperationException("the 2022 reader must exist before the header is stripped");
+        var fixedPart = new byte[Shadowsocks2022.UdpBodyHeaderSize];
+        ReadFromReader(reader, fixedPart);
+
+        if (!Shadowsocks2022.TryReadUdpBodyHeader(fixedPart, out _, out _, out var paddingLength))
+        {
+            throw new ClashException("shadowsocks: the 2022 server header could not be parsed");
+        }
+
+        if (paddingLength == 0) return;
+
+        var padding = new byte[paddingLength];
+        ReadFromReader(reader, padding);
+    }
+
+    private static void ReadFromReader(ShadowsocksAeadReader reader, Span<byte> destination)
+    {
+        var read = 0;
+        while (read < destination.Length)
+        {
+            var n = reader.Read(destination[read..]);
             if (n <= 0) throw new ClashException("shadowsocks: the peer closed the connection mid-header");
             read += n;
         }

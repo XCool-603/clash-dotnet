@@ -298,6 +298,10 @@ public sealed class Tunnel : ITunnel, IAsyncDisposable
     /// <summary>
     /// Maps a fake destination address back to the domain it stands for and marks
     /// the flow, so domain rules and the API report the real host.
+    /// <para>
+    /// A host recovered by the sniffer is never overwritten here: it is strictly
+    /// more informative than the bare address the client dialed.
+    /// </para>
     /// </summary>
     private void NormalizeMetadata(Metadata metadata)
     {
@@ -305,25 +309,21 @@ public sealed class Tunnel : ITunnel, IAsyncDisposable
 
         if (IPAddress.TryParse(metadata.DestinationAddress, out var address))
         {
-            if (Dns.IsFakeIp(address))
-            {
-                var host = Dns.ReverseFakeIp(address);
-                if (!string.IsNullOrEmpty(host))
-                {
-                    metadata.Host = host;
-                    metadata.DnsMode = DnsMode.FakeIp;
-                }
-            }
-            else if (string.IsNullOrEmpty(metadata.Host))
-            {
-                // A real address: remember it so IP rules can match without a lookup.
-                metadata.Host = null;
-            }
+            // A real address with no known name stays nameless so IP rules match on
+            // the address itself.
+            if (!Dns.IsFakeIp(address)) return;
+
+            var host = Dns.ReverseFakeIp(address);
+            if (string.IsNullOrEmpty(host)) return;
+
+            // Only the domain the fake address stands for is authoritative here;
+            // a sniffed host would have been set on the way in and wins.
+            metadata.Host ??= host;
+            metadata.DnsMode = DnsMode.FakeIp;
+            return;
         }
-        else if (string.IsNullOrEmpty(metadata.Host))
-        {
-            metadata.Host = metadata.DestinationAddress;
-        }
+
+        metadata.Host ??= metadata.DestinationAddress;
     }
 
     private async Task TrySniffAsync(PeekableStream stream, Metadata metadata, CancellationToken cancellationToken)

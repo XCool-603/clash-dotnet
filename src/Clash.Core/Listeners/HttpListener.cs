@@ -102,8 +102,12 @@ internal static class HttpProxyProtocol
             user = Authenticate(authorization, accounts);
             if (user is null)
             {
+                // Reported before the 407 goes out, so the log exists by the time
+                // the client sees the refusal.
+                var refusal = listener.RejectAuthentication(
+                    AuthenticationException.ForUser(DecodeBasicCredentials(authorization) ?? "anonymous"));
                 await WriteAsync(stream, ProxyAuthenticationRequired, cancellationToken).ConfigureAwait(false);
-                throw new AuthenticationException(DecodeBasicCredentials(authorization) ?? "anonymous");
+                throw refusal;
             }
         }
 

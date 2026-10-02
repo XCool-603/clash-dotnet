@@ -168,7 +168,7 @@ public sealed class DnsResolver : IDnsResolver, IDisposable
 
             if (IsFakeIpMode && ShouldFakeIp(name))
             {
-                var fake = _fakeIp.Allocate(name, wantV6);
+                var fake = _fakeIp.Allocate(name, ipv6: wantV6);
                 if (fake is not null) return [fake];
             }
 
@@ -212,7 +212,7 @@ public sealed class DnsResolver : IDnsResolver, IDisposable
         if (existing is not null) return existing;
 
         if (!ShouldFakeIp(name)) return null;
-        return _fakeIp.Allocate(name, ipv6: false);
+        return _fakeIp.Allocate(name);
     }
 
     /// <inheritdoc />
@@ -318,7 +318,7 @@ public sealed class DnsResolver : IDnsResolver, IDisposable
 
         if (IsFakeIpMode && ShouldFakeIp(name))
         {
-            var fake = _fakeIp.Allocate(name, type == DnsQueryType.Aaaa);
+            var fake = _fakeIp.Allocate(name, ipv6: type == DnsQueryType.Aaaa);
             if (fake is not null)
             {
                 var record = DnsCodec.CreateAddressRecord(name, fake, FakeIpTtl);
@@ -544,40 +544,43 @@ public sealed class DnsResolver : IDnsResolver, IDisposable
     {
         var (primary, fallback) = SelectChains(name);
         var forceFallback = MatchFallbackDomain(name);
+        var type = query.Questions[0].Type;
 
         var primaryTask = QueryRawAsync(primary, query, cancellationToken);
+        DnsMessage? chosen;
 
         if (fallback is null)
         {
-            var only = await primaryTask.ConfigureAwait(false);
-            return Finish(query, only);
+            chosen = await primaryTask.ConfigureAwait(false);
         }
-
-        var fallbackTask = QueryRawAsync(fallback, query, cancellationToken);
-        var primaryResponse = await primaryTask.ConfigureAwait(false);
-        var fallbackResponse = await fallbackTask.ConfigureAwait(false);
-
-        var chosen = primaryResponse;
-
-        if (query.Questions[0].Type is DnsQueryType.A or DnsQueryType.Aaaa)
+        else
         {
-            var primaryAddresses = ExtractAddresses(primaryResponse, query.Questions[0].Type);
-            if ((primaryAddresses.Length == 0 || forceFallback || IsPolluted(primaryAddresses))
-                && ExtractAddresses(fallbackResponse, query.Questions[0].Type).Length > 0)
+            var fallbackTask = QueryRawAsync(fallback, query, cancellationToken);
+            var primaryResponse = await primaryTask.ConfigureAwait(false);
+            var fallbackResponse = await fallbackTask.ConfigureAwait(false);
+
+            chosen = primaryResponse;
+
+            if (type is DnsQueryType.A or DnsQueryType.Aaaa)
+            {
+                var primaryAddresses = ExtractAddresses(primaryResponse, type);
+                if ((primaryAddresses.Length == 0 || forceFallback || IsPolluted(primaryAddresses))
+                    && ExtractAddresses(fallbackResponse, type).Length > 0)
+                {
+                    chosen = fallbackResponse;
+                }
+            }
+            else if (primaryResponse is null)
             {
                 chosen = fallbackResponse;
             }
         }
-        else if (primaryResponse is null)
-        {
-            chosen = fallbackResponse;
-        }
 
-        if (chosen is not null && query.Questions[0].Type is DnsQueryType.A or DnsQueryType.Aaaa)
+        if (chosen is not null && type is DnsQueryType.A or DnsQueryType.Aaaa)
         {
-            var addresses = ExtractAddresses(chosen, query.Questions[0].Type);
+            var addresses = ExtractAddresses(chosen, type);
             var ttl = chosen.Answers.Count > 0 ? ClampTtl(chosen.Answers.Min(a => a.Ttl)) : MinimumTtlSeconds;
-            Store(query.Questions[0].Type, name, new UpstreamAnswer(addresses, TimeSpan.FromSeconds(ttl), chosen.ResponseCode));
+            Store(type, name, new UpstreamAnswer(addresses, TimeSpan.FromSeconds(ttl), chosen.ResponseCode));
         }
 
         return Finish(query, chosen);
@@ -656,7 +659,7 @@ public sealed class DnsResolver : IDnsResolver, IDisposable
     }
 
     private NameserverChain GetChain(IReadOnlyList<string> raw)
-        => _chains.GetOrAdd(string.Join('\u0001', raw), _ => BuildChain(raw, allowBootstrapFallback: true));
+        => _chains.GetOrAdd(string.Join("\u0001", raw), _ => BuildChain(raw, allowBootstrapFallback: true));
 
     private NameserverChain BuildChain(IReadOnlyList<string> raw, bool allowBootstrapFallback)
     {
@@ -890,7 +893,7 @@ public sealed class DnsResolver : IDnsResolver, IDisposable
                 break;
 
             case string text:
-                foreach (var part in text.Split([',', ' ', '\t'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                foreach (var part in text.Split(new[] { ',', ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
                 {
                     result.Add(part);
                 }
@@ -953,11 +956,11 @@ public sealed class DnsResolver : IDnsResolver, IDisposable
             Servers = servers;
 
             var bare = key.Trim().TrimEnd('.').ToLowerInvariant();
-            var offset = bare.StartsWith('.', StringComparison.Ordinal) ? 1 : 2;
+            var offset = bare.StartsWith(".", StringComparison.Ordinal) ? 1 : 2;
 
             if (bare.StartsWith("+.", StringComparison.Ordinal)
                 || bare.StartsWith("*.", StringComparison.Ordinal)
-                || bare.StartsWith('.', StringComparison.Ordinal))
+                || bare.StartsWith(".", StringComparison.Ordinal))
             {
                 Suffix = bare[offset..];
                 IncludeApex = !bare.StartsWith("*.", StringComparison.Ordinal);
@@ -1013,7 +1016,7 @@ internal static class DomainPattern
 
         if (value.StartsWith("*.", StringComparison.Ordinal)) return MatchesSuffix(value[2..], host, includeApex: false);
         if (value.StartsWith("+.", StringComparison.Ordinal)) return MatchesSuffix(value[2..], host, includeApex: true);
-        if (value.StartsWith('.', StringComparison.Ordinal)) return MatchesSuffix(value[1..], host, includeApex: true);
+        if (value.StartsWith(".", StringComparison.Ordinal)) return MatchesSuffix(value[1..], host, includeApex: true);
 
         if (bareIsSuffix) return MatchesSuffix(value, host, includeApex: true);
         return string.Equals(value, host, StringComparison.OrdinalIgnoreCase);

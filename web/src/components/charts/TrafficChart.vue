@@ -23,15 +23,21 @@ type TrafficChartOption = ComposeOption<
 
 const props = withDefaults(
   defineProps<{
-    /** X-axis labels (one per sample). */
+    /** X-axis labels (one per sample). Used when `timestamps` is absent. */
     labels: string[]
     /** Download samples, bytes/second. */
     down: number[]
     /** Upload samples, bytes/second. */
     up: number[]
+    /**
+     * Epoch-ms sample times. When supplied (and aligned with the series) the
+     * chart switches to a real `type: 'time'` axis with a fixed window
+     * instead of a category axis of pre-formatted labels.
+     */
+    timestamps?: number[]
     height?: number
   }>(),
-  { height: 250 },
+  { timestamps: () => [], height: 250 },
 )
 
 const DOWN_COLOR = '#3b82f6'
@@ -39,6 +45,24 @@ const UP_COLOR = '#f59e0b'
 
 const settings = useSettingsStore()
 const isDark = computed<boolean>(() => settings.theme === 'dark')
+
+/** Only use the time axis when the sample times actually line up. */
+const hasTimeAxis = computed<boolean>(
+  () => props.timestamps.length > 0 && props.timestamps.length === props.down.length,
+)
+
+const windowStart = computed<number | undefined>(() =>
+  hasTimeAxis.value ? props.timestamps[0] : undefined,
+)
+const windowEnd = computed<number | undefined>(() =>
+  hasTimeAxis.value ? props.timestamps[props.timestamps.length - 1] : undefined,
+)
+
+/** Pair each value with its timestamp when the time axis is active. */
+function seriesData(values: number[]): number[] | [number, number][] {
+  if (!hasTimeAxis.value) return values
+  return values.map((value, index) => [props.timestamps[index] ?? 0, value] as [number, number])
+}
 
 const axisColor = computed<string>(() => (isDark.value ? '#6b7280' : '#98a2b3'))
 const splitColor = computed<string>(() =>
@@ -83,14 +107,31 @@ const option = computed<TrafficChartOption>(() => ({
     textStyle: { color: isDark.value ? '#e6edf3' : '#1f2329', fontSize: 12 },
     valueFormatter: (value: unknown) => formatRate(Number(value)),
   },
-  xAxis: {
-    type: 'category',
-    boundaryGap: false,
-    data: props.labels,
-    axisLine: { lineStyle: { color: splitColor.value } },
-    axisTick: { show: false },
-    axisLabel: { color: axisColor.value, fontSize: 11, hideOverlap: true },
-  },
+  xAxis: hasTimeAxis.value
+    ? {
+        type: 'time',
+        // A time axis takes no boolean `boundaryGap`; the window is fixed by
+        // `min`/`max` instead.
+        min: windowStart.value,
+        max: windowEnd.value,
+        axisLine: { lineStyle: { color: splitColor.value } },
+        axisTick: { show: false },
+        axisLabel: {
+          color: axisColor.value,
+          fontSize: 11,
+          hideOverlap: true,
+          formatter: '{HH}:{mm}:{ss}',
+        },
+        splitLine: { show: false },
+      }
+    : {
+        type: 'category',
+        boundaryGap: false,
+        data: props.labels,
+        axisLine: { lineStyle: { color: splitColor.value } },
+        axisTick: { show: false },
+        axisLabel: { color: axisColor.value, fontSize: 11, hideOverlap: true },
+      },
   yAxis: {
     type: 'value',
     axisLine: { show: false },
@@ -109,7 +150,7 @@ const option = computed<TrafficChartOption>(() => ({
       smooth: true,
       showSymbol: false,
       sampling: 'lttb',
-      data: props.down,
+      data: seriesData(props.down),
       lineStyle: { width: 2, color: DOWN_COLOR },
       itemStyle: { color: DOWN_COLOR },
       areaStyle: areaGradient(DOWN_COLOR),
@@ -120,7 +161,7 @@ const option = computed<TrafficChartOption>(() => ({
       smooth: true,
       showSymbol: false,
       sampling: 'lttb',
-      data: props.up,
+      data: seriesData(props.up),
       lineStyle: { width: 2, color: UP_COLOR },
       itemStyle: { color: UP_COLOR },
       areaStyle: areaGradient(UP_COLOR),

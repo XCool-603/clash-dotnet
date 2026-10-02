@@ -268,14 +268,18 @@ public sealed class ShareLinkParser : IShareLinkParser
     {
         var result = new List<ProxyConfigEntry>();
 
-        foreach (var raw in text.Split(new[] { '\n', '\r', '\t', ' ' }, StringSplitOptions.RemoveEmptyEntries))
+        foreach (var rawLine in text.Split('\n'))
         {
-            var line = raw.Trim();
+            var line = rawLine.Trim();
             if (line.Length == 0) continue;
             if (line.StartsWith('#') || line.StartsWith("//", StringComparison.Ordinal)) continue;
 
-            var entry = Parse(line);
-            if (entry is not null) result.Add(entry);
+            // A subscription may also pack several links onto one line.
+            foreach (var token in line.Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries))
+            {
+                var entry = Parse(token.Trim());
+                if (entry is not null) result.Add(entry);
+            }
         }
 
         return result;
@@ -877,19 +881,27 @@ public sealed class ShareLinkParser : IShareLinkParser
         var options = ParseQuery(query);
         var name = NameFrom(fragment, host, port);
 
+        // A WireGuard private key is itself base64, so the userinfo is taken verbatim.
+        // 'pre-shared-key' is a first-class WireGuard option (the Noise psk2 mix); without
+        // it a PSK-protected peer is simply unreachable, so it must be carried through.
+        // 'ip-stack' selects the userspace TCP/IP stack the outbound needs because
+        // WireGuard is layer 3; it is emitted for completeness even though this build
+        // has exactly one stack.
         return Create(name,
             "wireguard",
             ("server", host),
             ("port", port),
             ("private-key", NullIfEmpty(userinfo) ?? Opt(options, "privatekey", "private-key")),
             ("public-key", Opt(options, "publickey", "public-key", "peer-public-key")),
+            ("pre-shared-key", Opt(options, "pre-shared-key", "preshared-key", "psk")),
             ("ip", SplitList(Opt(options, "address", "ip"))),
             ("ipv6", SplitList(Opt(options, "address6", "ipv6"))),
             ("mtu", OptInt(options, "mtu")),
             ("reserved", SplitInts(Opt(options, "reserved"))),
             ("dns", SplitList(Opt(options, "dns"))),
             ("allowed-ips", SplitList(Opt(options, "allowed-ips", "allowed_ips"))),
-            ("persistent-keepalive", OptInt(options, "persistent-keepalive", "keepalive")));
+            ("persistent-keepalive", OptInt(options, "persistent-keepalive", "keepalive")),
+            ("ip-stack", Opt(options, "ip-stack", "ipstack")));
     }
 
     private static ProxyConfigEntry? ParseAnyTls(string body, string? fragment)
@@ -903,11 +915,17 @@ public sealed class ShareLinkParser : IShareLinkParser
             "anytls",
             ("server", host),
             ("port", port),
-            ("password", SplitCredentials(userinfo).Password ?? userinfo ?? Opt(options, "password")),
+            ("password", NullIfEmpty(userinfo) ?? Opt(options, "password")),
             ("sni", Opt(options, "sni", "peer")),
             ("skip-cert-verify", IsTrue(Opt(options, "insecure", "allowInsecure", "allow_insecure")) ? true : null),
             ("client-fingerprint", Opt(options, "fp")),
             ("alpn", SplitAlpn(Opt(options, "alpn"))),
+            // The padding scheme is what anytls exists for; a link that carries
+            // one must not lose it on the way to the adapter.
+            ("padding-scheme", Opt(options, "padding-scheme", "padding_scheme", "padding")),
+            ("idle-session-check-interval", OptInt(options, "idle-session-check-interval")),
+            ("idle-session-timeout", OptInt(options, "idle-session-timeout")),
+            ("min-idle-session", OptInt(options, "min-idle-session")),
             ("udp", IsTrue(Opt(options, "udp")) ? true : null));
     }
 
@@ -927,8 +945,9 @@ public sealed class ShareLinkParser : IShareLinkParser
             ("password", password ?? Opt(options, "password")),
             ("transport", Opt(options, "transport", "protocol")),
             ("multiplexing", Opt(options, "multiplexing", "multiplex")),
-            ("port-range", Opt(options, "port-range", "port_range")),
-            ("skip-cert-verify", IsTrue(Opt(options, "insecure", "allowInsecure")) ? true : null));
+            ("port-range", Opt(options, "port-range", "port_range")));
+        // No `skip-cert-verify` on purpose: mieru has no TLS, so the key would be
+        // a silent no-op that suggests protection the protocol does not offer.
     }
 
     // ── entry building ───────────────────────────────────────────────────────

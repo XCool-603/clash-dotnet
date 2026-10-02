@@ -204,7 +204,10 @@ public sealed class WebSocketController : ControllerBase
                 // Already reported through the cancellation.
             }
 
-            if (socket.State == WebSocketState.Open)
+            // `CloseReceived` matters: when the client starts the close handshake
+            // the socket is no longer `Open`, but it still needs our close frame
+            // back, otherwise the peer's CloseAsync fails instead of completing.
+            if (socket.State is WebSocketState.Open or WebSocketState.CloseReceived)
             {
                 try
                 {

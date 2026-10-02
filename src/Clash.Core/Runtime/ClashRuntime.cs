@@ -52,7 +52,7 @@ public sealed class ClashRuntime : IAsyncDisposable
     private readonly ITunnelAccessor _accessor = new TunnelAccessor();
     private readonly SemaphoreSlim _reloadGate = new(1, 1);
     private readonly List<IInboundListener> _extraListeners = [];
-    private readonly IReadOnlyDictionary<string, IRuleSet> _ruleSets;
+    private IReadOnlyDictionary<string, IRuleSet> _ruleSets;
 
     private ListenerManager? _listenerManager;
     private int _disposed;
@@ -89,9 +89,17 @@ public sealed class ClashRuntime : IAsyncDisposable
 
     public IGeoData Geo { get; }
 
-    public IRuleEngine Rules { get; }
+    /// <summary>
+    /// The live rule engine. Replaced on reload, so anything holding a reference to
+    /// the runtime must read it through this property rather than caching it.
+    /// </summary>
+    public IRuleEngine Rules { get; private set; }
 
-    public ProxyManager Proxies { get; }
+    /// <summary>
+    /// The live adapter registry. Replaced on reload (the previous one is disposed
+    /// by the tunnel), so read it through this property rather than caching it.
+    /// </summary>
+    public ProxyManager Proxies { get; private set; }
 
     public Tunnel.Tunnel Tunnel { get; }
 
@@ -225,6 +233,12 @@ public sealed class ClashRuntime : IAsyncDisposable
             Tunnel.UpdateConfig(config);
             Tunnel.Mode = config.Mode;
 
+            // The engine, the rule sets and the registry are all rebuilt on every
+            // reload, so the runtime must publish the new ones: `/rules`, the
+            // rule-provider endpoints and `/proxies` read them from here.
+            Rules = rules;
+            _ruleSets = ruleSets;
+            Proxies = proxies;
             Config = config;
 
             if (_listenerManager is not null)
@@ -263,6 +277,12 @@ public sealed class ClashRuntime : IAsyncDisposable
         _extraListeners.Clear();
 
         await Tunnel.DisposeAsync().ConfigureAwait(false);
+
+        if (Dns is IDisposable disposableDns)
+        {
+            try { disposableDns.Dispose(); } catch { /* shutting down */ }
+        }
+
         _reloadGate.Dispose();
         GC.SuppressFinalize(this);
     }

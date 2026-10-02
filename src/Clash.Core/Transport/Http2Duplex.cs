@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Buffers.Binary;
 using System.IO.Pipelines;
 using System.Net;
@@ -16,8 +17,12 @@ public static class Http2MessageFraming
     /// <summary>Bytes of the message header.</summary>
     public const int HeaderSize = 5;
 
-    /// <summary>Largest message this transport will frame or accept.</summary>
-    public const int MaxMessageSize = 4 * 1024 * 1024;
+    /// <summary>
+    /// Largest message this transport will frame or accept: 1 GiB, far above any
+    /// real v2ray message yet well below the 32-bit length field's ceiling, so a
+    /// malformed or hostile frame is rejected instead of allocated.
+    /// </summary>
+    public const int MaxMessageSize = 1024 * 1024 * 1024;
 
     /// <summary>Writes a message header. Returns the bytes written.</summary>
     public static int WriteHeader(Span<byte> destination, int payloadLength, bool compressed = false)

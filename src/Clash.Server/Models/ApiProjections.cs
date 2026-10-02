@@ -101,6 +101,7 @@ public static class ApiProjections
                 InboundPort = metadata.InboundPort == 0
                     ? string.Empty
                     : metadata.InboundPort.ToString(CultureInfo.InvariantCulture),
+                InboundUser = metadata.InboundUser ?? string.Empty,
                 Uid = int.TryParse(metadata.Uid, NumberStyles.Integer, CultureInfo.InvariantCulture, out var uid) ? uid : 0,
                 Dscp = metadata.Dscp,
             },

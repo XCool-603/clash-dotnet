@@ -119,6 +119,11 @@ public sealed class ChunkedStream : Stream
         await _inner.FlushAsync(cancellationToken).ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// Terminates the chunked body but deliberately leaves the inner stream open:
+    /// it is the transport beneath (or, in tests, a buffer the caller still owns),
+    /// and the owner of that stream disposes it.
+    /// </summary>
     protected override void Dispose(bool disposing)
     {
         if (disposing)
@@ -130,8 +135,6 @@ public sealed class ChunkedStream : Stream
             catch (Exception ex) when (ex is IOException or ObjectDisposedException or OperationCanceledException)
             {
             }
-
-            _inner.Dispose();
         }
 
         base.Dispose(disposing);
@@ -165,9 +168,19 @@ public sealed class ChunkedStream : Stream
         }
 
         if (_chunk.Length < size) _chunk = new byte[size];
-        if (!await ReadFromSourceAsync(_chunk.AsMemory(0, size), cancellationToken).ConfigureAwait(false))
+
+        // A single read may return short, so fill the whole chunk before handing
+        // it to the caller.
+        var filled = 0;
+        while (filled < size)
         {
-            throw new ClashException("http: the stream ended inside a chunk");
+            var read = await ReadFromSourceAsync(_chunk.AsMemory(filled, size - filled), cancellationToken)
+                .ConfigureAwait(false);
+            if (read <= 0)
+            {
+                throw new ClashException("http: the stream ended inside a chunk");
+            }
+            filled += read;
         }
 
         _chunkOffset = 0;

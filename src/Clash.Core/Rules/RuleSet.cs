@@ -217,7 +217,7 @@ public sealed class RuleSet : IRuleSet, IGeoDataConsumer
             count++;
         }
 
-        return new RuleSet(name, "ipcidr", null, matcher, [], count > 0, count);
+        return new RuleSet(name, "ipcidr", null, matcher, [], true, count);
     }
 
     private static IRuleSet BuildClassical(string name, List<string> entries)

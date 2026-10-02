@@ -35,6 +35,8 @@ public sealed class GlobalGroup : SelectorGroup
 public sealed class ProxyManager : IProxyManager, IAsyncDisposable
 {
     private readonly ConcurrentDictionary<string, IProxy> _proxies = new(StringComparer.Ordinal);
+    private readonly List<IProxy> _order = [];
+    private readonly Lock _orderLock = new();
     private readonly ConcurrentDictionary<string, List<IProxy>> _providerMembers = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, string> _providerOf = new(StringComparer.Ordinal);
     private readonly ILogger<ProxyManager> _logger;
@@ -46,28 +48,43 @@ public sealed class ProxyManager : IProxyManager, IAsyncDisposable
         Direct = new DirectAdapter(WellKnown.Direct, tunnel, loggerFactory.CreateLogger<DirectAdapter>());
         Reject = new RejectAdapter(WellKnown.Reject);
 
-        // GLOBAL spans every real outbound. The built-in adapters are excluded so
-        // that global mode does not default to DIRECT, which would make the mode
-        // appear broken on a fresh config.
+        // GLOBAL spans every real outbound. The built-in adapters are excluded by
+        // name - not by protocol type, because a user may configure a node of type
+        // `direct` or `reject` and that node is a real choice - so that global mode
+        // does not default to DIRECT, which would make the mode look broken.
         _global = new GlobalGroup(tunnel, loggerFactory.CreateLogger<GlobalGroup>(), () =>
         {
-            var candidates = All.Where(p => p.Type is not (ProxyType.Direct or ProxyType.Reject or ProxyType.Dns)).ToList();
+            var candidates = All.Where(p => !IsBuiltinName(p.Name)).ToList();
             return candidates.Count > 0 ? candidates : All;
         });
 
         _proxies[Direct.Name] = Direct;
         _proxies[Reject.Name] = Reject;
-        _proxies[WellKnown.RejectDrop] = new RejectAdapter(WellKnown.RejectDrop, drop: true);
+        var rejectDrop = new RejectAdapter(WellKnown.RejectDrop, drop: true);
+        _proxies[WellKnown.RejectDrop] = rejectDrop;
         _proxies[WellKnown.Global] = _global;
+
+        lock (_orderLock)
+        {
+            _order.Add(Direct);
+            _order.Add(Reject);
+            _order.Add(rejectDrop);
+        }
     }
 
     public IReadOnlyDictionary<string, IProxy> Proxies => _proxies;
 
-    /// <summary>Every adapter except <c>GLOBAL</c>, in insertion order.</summary>
-    public IReadOnlyList<IProxy> All => _proxies
-        .Where(kv => !string.Equals(kv.Key, WellKnown.Global, StringComparison.Ordinal))
-        .Select(kv => kv.Value)
-        .ToList();
+    /// <summary>
+    /// Every adapter except <c>GLOBAL</c>, in insertion order. A snapshot, so the
+    /// caller can enumerate it while the registry changes.
+    /// </summary>
+    public IReadOnlyList<IProxy> All
+    {
+        get
+        {
+            lock (_orderLock) return _order.ToArray();
+        }
+    }
 
     public IReadOnlyDictionary<string, IReadOnlyList<IProxy>> ProviderProxies
         => _providerMembers.ToDictionary(kv => kv.Key, kv => (IReadOnlyList<IProxy>)kv.Value.ToArray(), StringComparer.Ordinal);
@@ -91,6 +108,7 @@ public sealed class ProxyManager : IProxyManager, IAsyncDisposable
         var added = _proxies.TryAdd(proxy.Name, proxy);
         if (added)
         {
+            lock (_orderLock) _order.Add(proxy);
             if (proxy is ProxyGroupBase group) group.StartHealthCheck();
             RaiseChanged();
         }
@@ -125,6 +143,8 @@ public sealed class ProxyManager : IProxyManager, IAsyncDisposable
 
         if (!_proxies.TryRemove(name, out var removed)) return false;
 
+        lock (_orderLock) _order.RemoveAll(p => ReferenceEquals(p, removed));
+
         if (_providerOf.TryRemove(name, out var provider) && _providerMembers.TryGetValue(provider, out var list))
         {
             lock (list) list.RemoveAll(p => string.Equals(p.Name, name, StringComparison.Ordinal));
@@ -145,24 +165,42 @@ public sealed class ProxyManager : IProxyManager, IAsyncDisposable
     public void RemoveProvider(string providerName)
     {
         if (!_providerMembers.TryRemove(providerName, out var list)) return;
+
+        var removed = new List<IProxy>();
         lock (list)
         {
             foreach (var proxy in list)
             {
-                _proxies.TryRemove(proxy.Name, out _);
+                if (_proxies.TryRemove(proxy.Name, out _)) removed.Add(proxy);
                 _providerOf.TryRemove(proxy.Name, out _);
             }
         }
+
+        if (removed.Count > 0)
+        {
+            lock (_orderLock) _order.RemoveAll(proxy => removed.Contains(proxy));
+        }
+
         RaiseChanged();
     }
 
+    /// <summary>Removes everything except the built-in adapters and <c>GLOBAL</c>.</summary>
     public void Clear()
     {
         foreach (var name in _proxies.Keys.ToList())
         {
-            if (name is WellKnown.Global or WellKnown.Direct or WellKnown.Reject) continue;
+            if (name is WellKnown.Global or WellKnown.Direct or WellKnown.Reject or WellKnown.RejectDrop) continue;
             _proxies.TryRemove(name, out _);
         }
+
+        lock (_orderLock)
+        {
+            _order.RemoveAll(proxy =>
+                !string.Equals(proxy.Name, WellKnown.Direct, StringComparison.Ordinal) &&
+                !string.Equals(proxy.Name, WellKnown.Reject, StringComparison.Ordinal) &&
+                !string.Equals(proxy.Name, WellKnown.RejectDrop, StringComparison.Ordinal));
+        }
+
         _providerMembers.Clear();
         _providerOf.Clear();
         RaiseChanged();
@@ -187,8 +225,21 @@ public sealed class ProxyManager : IProxyManager, IAsyncDisposable
                 try { await asyncDisposable.DisposeAsync().ConfigureAwait(false); } catch { /* shutting down */ }
             }
         }
+
         _proxies.Clear();
+        lock (_orderLock) _order.Clear();
         _providerMembers.Clear();
+    }
+
+    /// <summary>True for the adapters the registry provides for every configuration.</summary>
+    private static bool IsBuiltinName(string name)
+    {
+        foreach (var builtin in WellKnown.BuiltinAdapters)
+        {
+            if (string.Equals(name, builtin, StringComparison.Ordinal)) return true;
+        }
+
+        return false;
     }
 
     private void RaiseChanged()

@@ -232,6 +232,12 @@ export interface ConnectionMetadata {
   host: string
   dnsMode: string
   processPath: string
+  /** Name of the process that owns the flow, when the core could resolve it. */
+  process: string
+  /** Inbound listener that accepted the flow: its name, port and authenticated user. */
+  inboundName: string
+  inboundPort: string
+  inboundUser: string
   specialProxy: string
   specialRules: string
   remoteDestination: string

@@ -64,12 +64,25 @@ export const useRulesStore = defineStore('rules', () => {
     await Promise.all([load(), loadProviders()])
   }
 
-  async function setDisabled(rule: Rule, disabled: boolean, key: string): Promise<ApiResult<unknown>> {
+  /**
+   * Enable/disable one rule.
+   *
+   * `PATCH /rules` (body `{type, payload, disabled}`) is the modern shape; a
+   * core that does not implement it answers 404, in which case the
+   * index-addressed `PATCH /rules/disable` (`{"<index>": disabled}`) is tried
+   * before the change is rolled back.
+   */
+  async function setDisabled(rule: Rule, disabled: boolean, index: number): Promise<ApiResult<unknown>> {
     const previous = rule.disabled === true
+    const key = ruleKey(rule, index)
     rule.disabled = disabled
     saving.value[key] = true
 
-    const result = await clashApi.patchRule({ type: rule.type, payload: rule.payload, disabled })
+    let result = await clashApi.patchRule({ type: rule.type, payload: rule.payload, disabled })
+
+    if (!result.ok && result.error.isMissing) {
+      result = await clashApi.patchRuleDisabled(index, disabled)
+    }
 
     saving.value[key] = false
     if (!result.ok) {

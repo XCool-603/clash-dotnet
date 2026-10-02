@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import type { CSSProperties } from 'vue'
 
 import { delayColor, delayLevel, formatDelay, withAlpha } from '@/utils/format'
+import { LATENCY_BAND_LABELS, latencyBand } from '@/utils/delay'
 
 const props = withDefaults(
   defineProps<{
@@ -14,17 +15,25 @@ const props = withDefaults(
     compact?: boolean
     /** Hide the unit suffix. */
     bare?: boolean
+    /**
+     * The health-check URL the measurement came from. Drives the
+     * protocol-aware thresholds: HTTPS probes get a wider green/yellow band
+     * than plain-HTTP ones.
+     */
+    probeUrl?: string
   }>(),
   {
     loading: false,
     showDot: true,
     compact: false,
     bare: false,
+    probeUrl: '',
   },
 )
 
-const level = computed<string>(() => delayLevel(props.delay))
-const color = computed<string>(() => delayColor(props.delay))
+const level = computed<string>(() => delayLevel(props.delay, props.probeUrl))
+const color = computed<string>(() => delayColor(props.delay, props.probeUrl))
+const band = computed(() => latencyBand(props.delay, props.probeUrl))
 
 const text = computed<string>(() => {
   if (props.loading) return 'testing…'
@@ -46,9 +55,11 @@ const style = computed<CSSProperties>(() => {
   }
 })
 
-const title = computed<string>(() =>
-  props.delay === null || props.delay === undefined ? 'No measurement yet' : text.value,
-)
+const title = computed<string>(() => {
+  if (props.loading) return 'Health check in progress'
+  if (props.delay === null || props.delay === undefined) return 'No measurement yet'
+  return `${text.value} · ${LATENCY_BAND_LABELS[band.value]}`
+})
 </script>
 
 <template>

@@ -29,14 +29,21 @@ public static class Sniffer
             var recordLength = BinaryPrimitives.ReadUInt16BigEndian(data[3..5]);
             var body = data[5..];
             if (body.Length < 4) return null;
+
+            // A record that claims more than we buffered is incomplete. Parsing the
+            // truncated tail would be guesswork, so report "no host" instead.
+            if (recordLength > body.Length) return null;
             if (recordLength < body.Length) body = body[..recordLength];
-            if (body.Length < 4) return null;
 
             if (body[0] != TlsHandshakeClientHello) return null;
 
             var handshakeLength = (body[1] << 16) | (body[2] << 8) | body[3];
             var hello = body[4..];
             if (hello.Length < 34) return null;
+
+            // Same rule for a ClientHello that lies about (or is still awaiting)
+            // its own length: only a complete one is worth parsing.
+            if (handshakeLength > hello.Length) return null;
             if (handshakeLength < hello.Length) hello = hello[..handshakeLength];
 
             var offset = 0;

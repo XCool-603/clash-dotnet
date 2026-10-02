@@ -28,7 +28,7 @@ internal enum ShadowsocksKind
 /// </summary>
 internal sealed class ShadowsocksMethod
 {
-    private ShadowsocksMethod(string name, ShadowsocksKind kind, IAeadCipher? aead, byte[] key, int ivSize)
+    internal ShadowsocksMethod(string name, ShadowsocksKind kind, IAeadCipher? aead, byte[] key, int ivSize)
     {
         Name = name;
         Kind = kind;
@@ -293,7 +293,7 @@ public sealed class ShadowsocksAdapter : OutboundAdapter
         var raw = await OpenAsync(metadata, upstream, cancellationToken).ConfigureAwait(false);
         try
         {
-            var pipe = raw;
+            Stream pipe = raw;
             if (_plugin is { Kind: ShadowsocksPluginKind.Obfs } obfs)
             {
                 pipe = new SimpleObfsStream(raw, obfs.ObfsMode, obfs.Host ?? ServerHost!, ServerPort);

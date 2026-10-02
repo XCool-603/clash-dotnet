@@ -315,8 +315,37 @@ public abstract class ListenerBase : IInboundListener
     internal ITunnel RequireTunnel()
         => Tunnel ?? throw new InvalidOperationException($"listener [{Type}] is not started");
 
-    /// <summary>Reports a per-connection failure to the log stream and the diagnostics sink.</summary>
-    internal void ReportError(Exception exception)
+    /// <summary>
+    /// Log hook for a per-connection failure. The default implementation pushes
+    /// the message to <see cref="ITunnel.Log"/> and to the diagnostics sink;
+    /// derived listeners may override it to add context.
+    /// </summary>
+    private protected virtual void OnError(Exception exception)
+    {
+        // A refusal reported at the point of rejection is already in the log.
+        if (exception is AuthenticationException { Reported: true }) return;
+
+        ReportFailure(exception);
+    }
+
+    /// <summary>
+    /// Reports a refused authentication <em>before</em> the refusal is written
+    /// back, so a client that observes the refusal can rely on the log line
+    /// already existing, and returns the exception the caller must throw.
+    /// </summary>
+    internal AuthenticationException RejectAuthentication(AuthenticationException exception)
+    {
+        exception.Reported = true;
+        ReportFailure(exception);
+        return exception;
+    }
+
+    /// <summary>Refuses the credentials a client presented. See the overload for the ordering contract.</summary>
+    internal AuthenticationException RejectAuthentication(string user)
+        => RejectAuthentication(AuthenticationException.ForUser(user));
+
+    /// <summary>Pushes a per-connection failure to the tunnel log and the diagnostics sink.</summary>
+    private void ReportFailure(Exception exception)
     {
         var level = exception is AuthenticationException ? "warning" : "error";
         var message = $"[{Type}] {exception.Message}";
@@ -393,7 +422,7 @@ public abstract class ListenerBase : IInboundListener
                     break;
                 }
 
-                ReportError(ex);
+                OnError(ex);
                 continue;
             }
 
@@ -417,7 +446,7 @@ public abstract class ListenerBase : IInboundListener
                 }
                 catch (Exception ex)
                 {
-                    ReportError(ex);
+                    OnError(ex);
                 }
                 finally
                 {

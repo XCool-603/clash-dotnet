@@ -346,14 +346,20 @@ public class UrlTestGroup : ProxyGroupBase
 
         Alive = true;
 
-        // Hysteresis: keep the incumbent unless the challenger is meaningfully
-        // faster, which is what `tolerance` is for.
-        var incumbent = _best;
+        // The incumbent is the current best, or — before anything has been
+        // measured — the first member that answered. A challenger must be faster
+        // by more than `tolerance` to take the group over, which is what stops a
+        // noisy probe from flapping the selection.
+        var incumbent = _best is not null && members.Contains(_best)
+            ? _best
+            : members.FirstOrDefault(m => results.TryGetValue(m.Name, out var d) && d > 0);
+
         if (incumbent is not null &&
             results.TryGetValue(incumbent.Name, out var incumbentDelay) &&
             incumbentDelay > 0 &&
             winnerDelay + _tolerance >= incumbentDelay)
         {
+            _best = incumbent;
             return;
         }
 
@@ -388,8 +394,11 @@ public sealed class FallbackGroup : ProxyGroupBase
 
     protected override void OnHealthCheckCompleted(IReadOnlyDictionary<string, int> results)
     {
-        _current = null;
-        Alive = Members.Any(m => results.TryGetValue(m.Name, out var d) && d > 0);
+        // Fallback order is configuration order: the first member that answered
+        // wins, and a recovered primary takes the group back.
+        var members = Members;
+        _current = members.FirstOrDefault(m => results.TryGetValue(m.Name, out var delay) && delay > 0);
+        Alive = _current is not null;
     }
 }
 

@@ -179,6 +179,7 @@ public sealed class ConnectedUdpPacketConnection : IPacketConnection
 public class NatPacketConnection : INatPacketConnection
 {
     private readonly Dictionary<string, EndPoint> _clientByRemote = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _sources = new(StringComparer.Ordinal);
     private readonly Lock _gate = new();
     private readonly Socket _socket;
     private EndPoint? _lastClient;
@@ -228,7 +229,7 @@ public class NatPacketConnection : INatPacketConnection
         {
             lock (_gate)
             {
-                return _clientByRemote.Count;
+                return _sources.Count;
             }
         }
     }
@@ -239,6 +240,7 @@ public class NatPacketConnection : INatPacketConnection
         ArgumentNullException.ThrowIfNull(source);
         lock (_gate)
         {
+            _sources.Add(source.ToString() ?? string.Empty);
             _lastClient = source;
         }
     }
@@ -251,6 +253,7 @@ public class NatPacketConnection : INatPacketConnection
         lock (_gate)
         {
             _clientByRemote[remote.ToString() ?? string.Empty] = client;
+            _sources.Add(client.ToString() ?? string.Empty);
             _lastClient = client;
         }
     }
@@ -315,6 +318,7 @@ public class NatPacketConnection : INatPacketConnection
             lock (_gate)
             {
                 _clientByRemote.Clear();
+                _sources.Clear();
                 _lastClient = null;
             }
         }

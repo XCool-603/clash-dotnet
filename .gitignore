@@ -15,6 +15,10 @@ web/*.tsbuildinfo
 npm-debug.log*
 pnpm-debug.log*
 
+## The dashboard bundle: `npm run build` emits it here and the .NET host
+## copies it into its output directory at build time.
+src/Clash.Server/wwwroot/
+
 ## Tauri / Rust
 desktop/target/
 desktop/src-tauri/target/

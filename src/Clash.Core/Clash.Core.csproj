@@ -19,4 +19,13 @@
     <PackageReference Include="System.IO.Hashing" Version="10.0.0" />
   </ItemGroup>
 
+  <!--
+    The hysteria2 framing types (varint, QPACK subset, HTTP/3 frames) are internal
+    because they are transport detail, but their byte layout is exactly what the
+    unit tests have to pin, so the test assembly is let in.
+  -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="Clash.Tests" />
+  </ItemGroup>
+
 </Project>

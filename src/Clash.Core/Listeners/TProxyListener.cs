@@ -146,7 +146,7 @@ public sealed class TProxyListener : ListenerBase
                 }
                 catch (Exception ex)
                 {
-                    ReportError(ex);
+                    OnError(ex);
                 }
             },
             CancellationToken.None);

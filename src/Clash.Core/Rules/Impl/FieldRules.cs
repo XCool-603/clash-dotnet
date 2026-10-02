@@ -111,7 +111,7 @@ public sealed class PortRule : IRule, ICanonicalRule
     public string Description => FormatRule(true);
 
     /// <inheritdoc />
-    string ICanonicalRule.FormatRule(bool withAdapter)
+    public string FormatRule(bool withAdapter)
         => Canonical.Line(RuleTypeName, Payload, Adapter, AdditionalPayload, withAdapter);
 }
 
@@ -207,7 +207,7 @@ public sealed class TextFieldRule : IRule, ICanonicalRule
     public string Description => FormatRule(true);
 
     /// <inheritdoc />
-    string ICanonicalRule.FormatRule(bool withAdapter)
+    public string FormatRule(bool withAdapter)
         => Canonical.Line(RuleTypeName, Payload, Adapter, AdditionalPayload, withAdapter);
 
     internal static string? FieldOf(Metadata metadata, MetadataTextField field) => field switch
@@ -283,7 +283,7 @@ public sealed class RegexFieldRule : IRule, ICanonicalRule
     public string Description => FormatRule(true);
 
     /// <inheritdoc />
-    string ICanonicalRule.FormatRule(bool withAdapter)
+    public string FormatRule(bool withAdapter)
         => Canonical.Line(RuleTypeName, Payload, Adapter, AdditionalPayload, withAdapter);
 }
 
@@ -365,7 +365,7 @@ public sealed class UidRule : IRule, ICanonicalRule
     public string Description => FormatRule(true);
 
     /// <inheritdoc />
-    string ICanonicalRule.FormatRule(bool withAdapter)
+    public string FormatRule(bool withAdapter)
         => Canonical.Line(RuleTypeName, Payload, Adapter, AdditionalPayload, withAdapter);
 
     private static bool TryRange(string text, out (long Start, long End) range)
@@ -438,7 +438,7 @@ public sealed class NetworkRule : IRule, ICanonicalRule
     public string Description => FormatRule(true);
 
     /// <inheritdoc />
-    string ICanonicalRule.FormatRule(bool withAdapter)
+    public string FormatRule(bool withAdapter)
         => Canonical.Line(RuleTypeName, Payload, Adapter, AdditionalPayload, withAdapter);
 }
 
@@ -502,7 +502,7 @@ public sealed class DscpRule : IRule, ICanonicalRule
     public string Description => FormatRule(true);
 
     /// <inheritdoc />
-    string ICanonicalRule.FormatRule(bool withAdapter)
+    public string FormatRule(bool withAdapter)
         => Canonical.Line(RuleTypeName, Payload, Adapter, AdditionalPayload, withAdapter);
 }
 
@@ -548,6 +548,6 @@ public sealed class MatchRule : IRule, ICanonicalRule
     public string Description => FormatRule(true);
 
     /// <inheritdoc />
-    string ICanonicalRule.FormatRule(bool withAdapter)
+    public string FormatRule(bool withAdapter)
         => Canonical.Line("MATCH", null, Adapter, AdditionalPayload, withAdapter);
 }

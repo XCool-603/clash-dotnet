@@ -1,4 +1,4 @@
-import { apiDelete, apiGet, apiPatch, apiPut, encodeName } from './client'
+import { apiDelete, apiGet, apiPatch, apiPost, apiPut, encodeName } from './client'
 import type { ApiResult } from './client'
 import type {
   ClashConfig,
@@ -10,7 +10,6 @@ import type {
   ProxyProvider,
   ProxyProvidersResponse,
   ProxiesResponse,
-  RuleProvider,
   RuleProvidersResponse,
   RulesResponse,
   VersionInfo,
@@ -53,7 +52,17 @@ export const clashApi = {
   loadConfigPayload: (payload: string, force = false): Promise<ApiResult<unknown>> =>
     apiPut<unknown>('/configs', { payload }, { params: { force: force ? 'true' : undefined } }),
 
-  flushFakeIp: (): Promise<ApiResult<unknown>> => apiGet<unknown>('/cache/fakeip/flush'),
+  flushFakeIp: (): Promise<ApiResult<unknown>> => apiPost<unknown>('/cache/fakeip/flush'),
+
+  flushDns: (): Promise<ApiResult<unknown>> => apiPost<unknown>('/cache/dns/flush'),
+
+  /**
+   * Restart the core process. Not mounted in every build (mihomo's embed mode
+   * omits `/restart`), so callers must treat a 404 as "unsupported".
+   */
+  restartCore: (): Promise<ApiResult<unknown>> => apiPost<unknown>('/restart'),
+
+  updateGeo: (): Promise<ApiResult<unknown>> => apiPost<unknown>('/configs/geo'),
 
   /* ---- proxies ---------------------------------------------------- */
   proxies: (): Promise<ApiResult<ProxiesResponse>> => apiGet<ProxiesResponse>('/proxies'),
@@ -68,17 +77,40 @@ export const clashApi = {
   proxyDelay: (name: string, options?: DelayOptions): Promise<ApiResult<DelayResponse>> =>
     apiGet<DelayResponse>(`/proxies/${encodeName(name)}/delay`, { params: delayParams(options) }),
 
+  /** Remove a manual pin from an automatic (`URLTest`/`Fallback`) group. */
+  unfixProxy: (name: string): Promise<ApiResult<unknown>> =>
+    apiDelete<unknown>(`/proxies/${encodeName(name)}`),
+
   groupDelay: (name: string, options?: DelayOptions): Promise<ApiResult<GroupDelayResponse>> =>
     apiGet<GroupDelayResponse>(`/group/${encodeName(name)}/delay`, { params: delayParams(options) }),
+
+  /** Provider-scoped single-node probe — required for nodes that only exist inside a provider. */
+  providerNodeDelay: (
+    provider: string,
+    node: string,
+    options?: DelayOptions,
+  ): Promise<ApiResult<DelayResponse>> =>
+    apiGet<DelayResponse>(
+      `/providers/proxies/${encodeName(provider)}/${encodeName(node)}/healthcheck`,
+      { params: delayParams(options) },
+    ),
 
   /* ---- rules ------------------------------------------------------ */
   rules: (): Promise<ApiResult<RulesResponse>> => apiGet<RulesResponse>('/rules'),
 
+  /** Preferred per-rule toggle on mihomo. */
   patchRule: (rule: {
     type: string
     payload: string
     disabled: boolean
   }): Promise<ApiResult<unknown>> => apiPatch<unknown>('/rules', rule),
+
+  /**
+   * Index-addressed fallback for cores that only expose `PATCH /rules/disable`.
+   * The body is `{ "<index>": disabled }`.
+   */
+  patchRuleDisabled: (index: number, disabled: boolean): Promise<ApiResult<unknown>> =>
+    apiPatch<unknown>('/rules/disable', { [String(index)]: disabled }),
 
   ruleProviders: (): Promise<ApiResult<RuleProvidersResponse>> =>
     apiGet<RuleProvidersResponse>('/providers/rules'),

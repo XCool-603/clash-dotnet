@@ -34,5 +34,16 @@ public sealed class ListenerBindException(string type, string address, Exception
     : ClashException($"listener [{type}] failed to bind {address}", inner);
 
 /// <summary>Raised when inbound authentication fails.</summary>
-public sealed class AuthenticationException(string user)
-    : ClashException($"authentication failed for [{user}]");
+public sealed class AuthenticationException(string message)
+    : ClashException(message)
+{
+    /// <summary>The refusal of the credentials a client presented.</summary>
+    public static AuthenticationException ForUser(string user)
+        => new($"authentication failed for [{user}]");
+
+    /// <summary>
+    /// True when the listener already reported the failure at the point of
+    /// refusal, so the generic per-connection error hook must not log it again.
+    /// </summary>
+    public bool Reported { get; set; }
+}

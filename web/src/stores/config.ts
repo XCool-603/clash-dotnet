@@ -43,11 +43,19 @@ export const useConfigStore = defineStore('config', () => {
   const logLevel = computed<LogLevel>(() => normalizeLogLevel(config.value?.['log-level']))
   const connected = computed<boolean>(() => online.value)
   const versionLabel = computed<string>(() => version.value?.version ?? 'unknown')
+  /**
+   * `GET /version` reports `meta: true` for the MetaCubeX (mihomo) core, which
+   * is the capability gate for every app-level feature (profiles, rule
+   * enable/disable, DNS settings). A stock Clash core answers `meta: false`
+   * or omits the field entirely.
+   */
+  const hasMeta = computed<boolean>(() => version.value?.meta === true)
   const secretConfigured = computed<boolean>(
     () => typeof config.value?.secret === 'string' && config.value.secret.length > 0,
   )
   const tunEnabled = computed<boolean>(() => config.value?.tun?.enable === true)
   const dnsEnabled = computed<boolean>(() => config.value?.dns?.enable === true)
+  const configAvailable = computed<boolean>(() => config.value !== null)
 
   function applyFailure(failure: ApiError): void {
     error.value = failure
@@ -143,6 +151,23 @@ export const useConfigStore = defineStore('config', () => {
     return result
   }
 
+  async function flushDns(): Promise<ApiResult<unknown>> {
+    const result = await clashApi.flushDns()
+    if (!result.ok) applyFailure(result.error)
+    return result
+  }
+
+  /**
+   * Ask the core to restart itself. mihomo does not mount `/restart` in embed
+   * mode, so a 404 is reported to the caller as "unsupported" rather than as a
+   * failure of the app.
+   */
+  async function restartCore(): Promise<ApiResult<unknown>> {
+    const result = await clashApi.restartCore()
+    if (!result.ok && !result.error.isMissing) applyFailure(result.error)
+    return result
+  }
+
   function startPolling(intervalMs = 5000): void {
     if (pollTimer !== null) return
     pollTimer = setInterval(() => {
@@ -172,9 +197,11 @@ export const useConfigStore = defineStore('config', () => {
     logLevel,
     connected,
     versionLabel,
+    hasMeta,
     secretConfigured,
     tunEnabled,
     dnsEnabled,
+    configAvailable,
     // actions
     load,
     ping,
@@ -183,6 +210,8 @@ export const useConfigStore = defineStore('config', () => {
     setLogLevel,
     reloadProfile,
     flushFakeIp,
+    flushDns,
+    restartCore,
     startPolling,
     stopPolling,
   }

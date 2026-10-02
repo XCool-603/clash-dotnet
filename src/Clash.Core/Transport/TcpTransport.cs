@@ -92,7 +92,8 @@ public sealed class TcpTransport : ITransportLayer
 
         try
         {
-            var system = await Dns.GetHostAddressesAsync(context.Host, cancellationToken).ConfigureAwait(false);
+            // Fully qualified: `Clash.Core.Dns` shadows `System.Net.Dns` in this file.
+            var system = await System.Net.Dns.GetHostAddressesAsync(context.Host, cancellationToken).ConfigureAwait(false);
             return ipv6 ? system : [.. system.Where(a => a.AddressFamily == AddressFamily.InterNetwork)];
         }
         catch (SocketException ex)

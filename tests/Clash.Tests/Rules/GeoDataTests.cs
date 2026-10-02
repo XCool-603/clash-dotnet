@@ -225,7 +225,7 @@ public class GeoDataTests
         await geo.LoadAsync();
         await geo.LoadAsync();
 
-        Assert.Equal(1, geo.GetGeoSite("CN")!.Count);
+        Assert.Single(geo.GetGeoSite("CN")!);
     }
 
     [Fact]

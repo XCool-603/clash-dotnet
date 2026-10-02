@@ -53,8 +53,9 @@ public sealed class DnsCodec : IDnsCodec
     private const ushort FlagRecursionAvailable = 0x0080;
     private const ushort FlagAuthenticatedData = 0x0020;
     private const ushort FlagCheckingDisabled = 0x0010;
-    private const ushort CompressionMask = 0xC000;
-    private const ushort CompressionPointer = 0xC000;
+    private const byte CompressionMask = 0xC0;
+    private const byte CompressionPointer = 0xC0;
+    private const ushort CompressionPointerWord = 0xC000;
     private const int CompressionOffsetMask = 0x3FFF;
 
     /// <inheritdoc />
@@ -312,7 +313,7 @@ public sealed class DnsCodec : IDnsCodec
 
             if (canPoint)
             {
-                WriteUInt16(stream, (ushort)(CompressionPointer | questionNameOffset));
+                WriteUInt16(stream, (ushort)(CompressionPointerWord | questionNameOffset));
             }
             else
             {

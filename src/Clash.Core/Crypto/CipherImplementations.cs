@@ -54,19 +54,19 @@ public static class StreamCipherFactory
 }
 
 /// <summary>BLAKE3 key-derivation helpers shared by the 2022 ciphers.</summary>
-internal static class Blake3Kdf
+public static class Blake3Kdf
 {
     /// <summary>
     /// The BLAKE3 derive-key context used by the Shadowsocks 2022 session subkey
     /// derivation (SIP022).
     /// </summary>
-    internal const string SessionSubkeyContext = "shadowsocks 2022 session subkey";
+    public const string SessionSubkeyContext = "shadowsocks 2022 session subkey";
 
     /// <summary>
     /// BLAKE3 in derive-key mode: <c>output = BLAKE3-DERIVE-KEY(context, keyMaterial)</c>.
     /// The output may be any length; BLAKE3's XOF is used when it is not 32 bytes.
     /// </summary>
-    internal static void DeriveKey(string context, ReadOnlySpan<byte> keyMaterial, Span<byte> output)
+    public static void DeriveKey(string context, ReadOnlySpan<byte> keyMaterial, Span<byte> output)
     {
         using var hasher = Blake3.Hasher.NewDeriveKey(context);
         hasher.Update(keyMaterial);
@@ -77,7 +77,7 @@ internal static class Blake3Kdf
     /// BLAKE3 derive-key over two concatenated inputs, without materialising the
     /// concatenation (<c>keyMaterial || salt</c>).
     /// </summary>
-    internal static void DeriveKey(string context, ReadOnlySpan<byte> first, ReadOnlySpan<byte> second, Span<byte> output)
+    public static void DeriveKey(string context, ReadOnlySpan<byte> first, ReadOnlySpan<byte> second, Span<byte> output)
     {
         using var hasher = Blake3.Hasher.NewDeriveKey(context);
         hasher.Update(first);
@@ -222,7 +222,7 @@ internal abstract class AeadCipherBase : IAeadCipher
     protected void CheckEncryptArguments(ReadOnlySpan<byte> subkey, ReadOnlySpan<byte> nonce, int plaintextLength, Span<byte> destination)
     {
         if (subkey.Length != KeySize) throw new ArgumentException($"subkey must be {KeySize} bytes, got {subkey.Length}", nameof(subkey));
-        if (nonce.Length != NonceSize) throw new ArgumentException($"nonce must be {NonceSize} bytes, got {nonce.Length}", nameof(nonce));
+        CheckNonce(nonce);
         if (destination.Length < plaintextLength + TagSize)
         {
             throw new ArgumentException($"destination must be at least {plaintextLength + TagSize} bytes, got {destination.Length}", nameof(destination));
@@ -233,12 +233,18 @@ internal abstract class AeadCipherBase : IAeadCipher
     protected void CheckDecryptArguments(ReadOnlySpan<byte> subkey, ReadOnlySpan<byte> nonce, ReadOnlySpan<byte> ciphertext, Span<byte> destination)
     {
         if (subkey.Length != KeySize) throw new ArgumentException($"subkey must be {KeySize} bytes, got {subkey.Length}", nameof(subkey));
-        if (nonce.Length != NonceSize) throw new ArgumentException($"nonce must be {NonceSize} bytes, got {nonce.Length}", nameof(nonce));
+        CheckNonce(nonce);
         if (ciphertext.Length < TagSize) throw new ArgumentException("ciphertext shorter than the tag", nameof(ciphertext));
         if (destination.Length < ciphertext.Length - TagSize)
         {
             throw new ArgumentException($"destination must be at least {ciphertext.Length - TagSize} bytes, got {destination.Length}", nameof(destination));
         }
+    }
+
+    /// <summary>Validates the nonce length. Overridden where a primitive takes more than one width.</summary>
+    protected virtual void CheckNonce(ReadOnlySpan<byte> nonce)
+    {
+        if (nonce.Length != NonceSize) throw new ArgumentException($"nonce must be {NonceSize} bytes, got {nonce.Length}", nameof(nonce));
     }
 }
 
@@ -289,6 +295,24 @@ internal sealed class HkdfAeadCipher : AeadCipherBase
     public override int KeySize { get; }
 
     public override int SaltSize { get; }
+
+    /// <summary>
+    /// XChaCha20-Poly1305 also accepts its native 24-byte nonce (the RFC draft
+    /// vector uses one); a 12-byte Shadowsocks counter is zero-extended.
+    /// </summary>
+    protected override void CheckNonce(ReadOnlySpan<byte> nonce)
+    {
+        if (_primitive != Primitive.XChaCha20Poly1305)
+        {
+            base.CheckNonce(nonce);
+            return;
+        }
+
+        if (nonce.Length is not (12 or 24))
+        {
+            throw new ArgumentException($"nonce must be 12 or 24 bytes, got {nonce.Length}", nameof(nonce));
+        }
+    }
 
     public override byte[] DeriveSubkey(ReadOnlySpan<byte> masterKey, ReadOnlySpan<byte> salt)
     {
@@ -453,11 +477,21 @@ internal sealed class Blake3AeadCipher : AeadCipherBase
 /// fed to BouncyCastle's RFC 7539 ChaCha20-Poly1305 with the IETF nonce
 /// <c>00000000 || nonce[16..24]</c>.
 /// </summary>
-internal static class XChaCha20Poly1305
+public static class XChaCha20Poly1305
 {
     private const int KeySize = 32;
     private const int NonceSize = 24;
 
+    /// <summary>
+    /// The Shadowsocks nonce is a 12-byte little-endian counter (see
+    /// <see cref="ShadowsocksAeadFraming.NonceSize"/>), while XChaCha20 takes a
+    /// 24-byte nonce. A 12-byte counter is therefore zero-extended into the high
+    /// half, which is byte-identical to the 192-bit little-endian counter
+    /// shadowsocks-rust increments for every counter below 2^96.
+    /// </summary>
+    private const int CounterNonceSize = 12;
+
+    /// <summary>Seals <paramref name="plaintext"/> into <paramref name="ciphertext"/> plus <paramref name="tag"/>.</summary>
     public static void Encrypt(
         ReadOnlySpan<byte> key,
         ReadOnlySpan<byte> nonce,
@@ -467,11 +501,16 @@ internal static class XChaCha20Poly1305
         ReadOnlySpan<byte> associatedData)
     {
         if (key.Length != KeySize) throw new ArgumentException($"key must be {KeySize} bytes", nameof(key));
-        if (nonce.Length != NonceSize) throw new ArgumentException($"nonce must be {NonceSize} bytes", nameof(nonce));
+
+        Span<byte> fullNonce = stackalloc byte[NonceSize];
+        if (!TryExpandNonce(nonce, fullNonce))
+        {
+            throw new ArgumentException($"nonce must be {NonceSize} or {CounterNonceSize} bytes, got {nonce.Length}", nameof(nonce));
+        }
 
         Span<byte> subkey = stackalloc byte[KeySize];
         Span<byte> ietfNonce = stackalloc byte[12];
-        DeriveIetfParameters(key, nonce, subkey, ietfNonce);
+        DeriveIetfParameters(key, fullNonce, subkey, ietfNonce);
 
         var input = plaintext.ToArray();
         var output = new byte[input.Length + 16];
@@ -483,6 +522,7 @@ internal static class XChaCha20Poly1305
         CryptographicOperations.ZeroMemory(output);
     }
 
+    /// <summary>Opens a sealed message. Returns false when the tag does not verify.</summary>
     public static bool TryDecrypt(
         ReadOnlySpan<byte> key,
         ReadOnlySpan<byte> nonce,
@@ -492,11 +532,16 @@ internal static class XChaCha20Poly1305
         ReadOnlySpan<byte> associatedData)
     {
         if (key.Length != KeySize) throw new ArgumentException($"key must be {KeySize} bytes", nameof(key));
-        if (nonce.Length != NonceSize) throw new ArgumentException($"nonce must be {NonceSize} bytes", nameof(nonce));
+
+        Span<byte> fullNonce = stackalloc byte[NonceSize];
+        if (!TryExpandNonce(nonce, fullNonce))
+        {
+            throw new ArgumentException($"nonce must be {NonceSize} or {CounterNonceSize} bytes, got {nonce.Length}", nameof(nonce));
+        }
 
         Span<byte> subkey = stackalloc byte[KeySize];
         Span<byte> ietfNonce = stackalloc byte[12];
-        DeriveIetfParameters(key, nonce, subkey, ietfNonce);
+        DeriveIetfParameters(key, fullNonce, subkey, ietfNonce);
 
         var input = new byte[ciphertext.Length + 16];
         ciphertext.CopyTo(input);
@@ -534,6 +579,28 @@ internal static class XChaCha20Poly1305
         nonce[16..24].CopyTo(ietfNonce[4..]);
     }
 
+    /// <summary>
+    /// Widens a nonce to the 24 bytes XChaCha20 requires. A full-length nonce is
+    /// taken verbatim; a 12-byte Shadowsocks counter is zero-extended.
+    /// </summary>
+    private static bool TryExpandNonce(ReadOnlySpan<byte> nonce, Span<byte> destination)
+    {
+        if (nonce.Length == NonceSize)
+        {
+            nonce.CopyTo(destination);
+            return true;
+        }
+
+        if (nonce.Length == CounterNonceSize)
+        {
+            destination.Clear();
+            nonce.CopyTo(destination);
+            return true;
+        }
+
+        return false;
+    }
+
     private static int RunBc(
         bool encrypting,
         ReadOnlySpan<byte> subkey,
@@ -551,7 +618,7 @@ internal static class XChaCha20Poly1305
     }
 
     /// <summary>HChaCha20 (draft-irtf-cfrg-xchacha §2.2): the 20-round core without the final addition.</summary>
-    internal static void HChaCha20(ReadOnlySpan<byte> key, ReadOnlySpan<byte> nonce16, Span<byte> output)
+    public static void HChaCha20(ReadOnlySpan<byte> key, ReadOnlySpan<byte> nonce16, Span<byte> output)
     {
         if (key.Length != 32) throw new ArgumentException("HChaCha20 needs a 32-byte key", nameof(key));
         if (nonce16.Length != 16) throw new ArgumentException("HChaCha20 needs a 16-byte nonce", nameof(nonce16));

@@ -259,7 +259,14 @@ public sealed class RuleProviderLoader : IRuleProviderLoader, IDisposable
                 Flatten(list, result);
                 break;
             case string text:
-                return ReadTextPayload(text);
+                // A body of bare lines is folded into a single YAML scalar; its
+                // whitespace still separates the entries.
+                foreach (var part in text.Split(new[] { ' ', '\t', '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
+                {
+                    if (!part.StartsWith('#')) result.Add(part);
+                }
+
+                break;
             default:
                 return ReadTextPayload(body);
         }

@@ -42,6 +42,10 @@ internal sealed class FakeDnsUpstream : IDnsUpstream
         response.Id = query.Id;
         return Task.FromResult(response);
     }
+
+    public void Dispose()
+    {
+    }
 }
 
 /// <summary>Canned responses for <see cref="FakeDnsUpstream"/>.</summary>

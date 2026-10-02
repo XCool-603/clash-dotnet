@@ -160,11 +160,14 @@ public class CidrMatcherTests
     public void Ipv6SuffixMatchesLowBits()
     {
         Assert.True(IpSuffix.TryParse("::1/128", out var suffix));
-        Assert.True(suffix.Matches(IPAddress.Parse("2001:db8::1")));
-        Assert.False(suffix.Matches(IPAddress.Parse("2001:db8::2")));
+        Assert.True(suffix.Matches(IPAddress.Parse("::1")));
+        Assert.False(suffix.Matches(IPAddress.Parse("2001:db8::1")));
+        Assert.False(suffix.Matches(IPAddress.Parse("::2")));
 
         Assert.True(IpSuffix.TryParse("::abcd/112", out var block));
         Assert.True(block.Matches(IPAddress.Parse("::abcd")));
-        Assert.False(block.Matches(IPAddress.Parse("::1abcd")));
+        Assert.True(block.Matches(IPAddress.Parse("1::abcd")));
+        Assert.False(block.Matches(IPAddress.Parse("2001:db8::abcd")));
+        Assert.False(block.Matches(IPAddress.Parse("::1:abcd")));
     }
 }

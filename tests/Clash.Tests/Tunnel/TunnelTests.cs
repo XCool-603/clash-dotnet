@@ -24,7 +24,7 @@ public class TunnelTests
         public string Description => $"{typeName},{payload},{adapter}";
     }
 
-    private static (Tunnel Tunnel, ProxyManager Proxies, FakeRuleEngine Rules, FakeDnsResolver Dns, FakeTunnelAccessor Accessor) Build(
+    private static (Core.Tunnel.Tunnel Tunnel, ProxyManager Proxies, FakeRuleEngine Rules, FakeDnsResolver Dns, FakeTunnelAccessor Accessor) Build(
         Mode mode = Mode.Rule,
         Action<ClashConfig>? configure = null)
     {

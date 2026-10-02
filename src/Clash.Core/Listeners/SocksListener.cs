@@ -111,11 +111,16 @@ internal static class SocksProxyProtocol
             selected = MethodNoAuth;
         }
 
+        // Same rule as a rejected password: report before refusing.
+        var methodRefusal = selected == MethodNoneAcceptable
+            ? listener.RejectAuthentication(new AuthenticationException("no acceptable SOCKS5 authentication method"))
+            : null;
+
         await stream.WriteAsync(new byte[] { Version5, selected }, cancellationToken).ConfigureAwait(false);
         await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
-        if (selected == MethodNoneAcceptable)
+        if (methodRefusal is not null)
         {
-            throw new AuthenticationException("no acceptable SOCKS5 authentication method");
+            throw methodRefusal;
         }
 
         string? user = null;
@@ -288,11 +293,15 @@ internal static class SocksProxyProtocol
             }
         }
 
+        // Report the refusal before it goes on the wire, so the log line is
+        // already there for anyone watching the refusal happen.
+        var refusal = accepted ? null : listener.RejectAuthentication(user);
+
         await stream.WriteAsync(new byte[] { 0x01, accepted ? (byte)0x00 : (byte)0x01 }, cancellationToken).ConfigureAwait(false);
         await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
-        if (!accepted)
+        if (refusal is not null)
         {
-            throw new AuthenticationException(user);
+            throw refusal;
         }
 
         return user;

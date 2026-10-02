@@ -235,7 +235,8 @@ public sealed class ProvidersController : ControllerBase
             ? path
             : System.IO.Path.Combine(runtime.HomeDir, path);
 
-        return System.IO.File.Exists(resolved) ? System.IO.File.GetLastWriteTimeUtc(resolved) : null;
+        if (!System.IO.File.Exists(resolved)) return null;
+        return System.IO.File.GetLastWriteTimeUtc(resolved);
     }
 
     private static string VehicleType(string? type) => type?.Trim().ToLowerInvariant() switch
