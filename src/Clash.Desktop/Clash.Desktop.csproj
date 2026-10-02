@@ -15,4 +15,16 @@
     <ProjectReference Include="..\Clash.Server\Clash.Server.csproj" />
   </ItemGroup>
 
+  <!--
+    The dashboard is published into Clash.Server/wwwroot and served by the
+    embedded host. Content items do not flow across project references by
+    default, so the tray build would ship without the dashboard unless the
+    files are carried over explicitly.
+  -->
+  <ItemGroup>
+    <Content Include="..\Clash.Server\wwwroot\**\*" Link="wwwroot\%(RecursiveDir)%(Filename)%(Extension)"
+             CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest"
+             Visible="false" />
+  </ItemGroup>
+
 </Project>

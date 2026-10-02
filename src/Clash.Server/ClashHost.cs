@@ -47,7 +47,15 @@ public static class ClashHost
         NumberHandling = JsonNumberHandling.AllowReadingFromString,
     };
 
-    /// <summary>Creates the application without starting it. Used by tests and the desktop shell.</summary>
+    /// <summary>
+    /// The address bound when no configuration exists yet. A first run has no
+    /// config file at Build time, so without this the host would come up on a
+    /// random port the starter configuration (written moments later, advertising
+    /// 127.0.0.1:9090) would not match until the second launch.
+    /// </summary>
+    private const string DefaultControllerAddress = "127.0.0.1:9090";
+
+    /// <summary>Builds the application without starting it. Used by tests and the desktop shell.</summary>
     public static WebApplication Build(string[] args, Action<WebApplicationBuilder>? configure = null)
     {
         var webRoot = Path.Combine(AppContext.BaseDirectory, "wwwroot");
@@ -206,13 +214,13 @@ public static class ClashHost
                 : homeDir!;
 
             var path = Clash.Core.Runtime.ClashRuntime.ResolveConfigPath(configPath, home);
-            if (path is null || !File.Exists(path)) return null;
+            if (path is null || !File.Exists(path)) return DefaultControllerAddress;
 
             var value = Clash.Core.Configuration.YamlReader
                 .Parse(File.ReadAllText(path))
                 .GetNonEmptyString("external-controller");
 
-            if (string.IsNullOrWhiteSpace(value)) return null;
+            if (string.IsNullOrWhiteSpace(value)) return DefaultControllerAddress;
 
             // `:9090` means "every interface", like Clash.
             var trimmed = value.Trim();

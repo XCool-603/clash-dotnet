@@ -191,6 +191,11 @@ public sealed class ClashService : IHostedService, IAsyncDisposable
             ConfigPath = configPath,
             HomeDir = homeDir,
             LoggerFactory = services.GetRequiredService<ILoggerFactory>(),
+            // A first run with no configuration must come up usable: the runtime
+            // writes a working starter config into the home directory, which the
+            // user then edits (or replaces via Profiles) instead of staring at a
+            // failed start.
+            CreateDefaultConfigIfMissing = true,
         };
     }
 

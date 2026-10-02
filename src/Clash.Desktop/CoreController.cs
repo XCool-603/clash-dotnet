@@ -47,8 +47,9 @@ internal sealed class CoreController : IAsyncDisposable
     /// <summary>Base URL of the control API.</summary>
     public string BaseUrl { get; private set; }
 
-    /// <summary>Dashboard URL opened in the browser.</summary>
-    public string DashboardUrl => BaseUrl + "/";
+    /// <summary>Dashboard URL opened in the browser. The shell lives under /ui:
+    /// the bare / path answers the API greeting, like every Clash core.</summary>
+    public string DashboardUrl => BaseUrl + "/ui";
 
     /// <summary>The configured mixed proxy port, once the config has been read.</summary>
     public int MixedPort => _mixedPort;
