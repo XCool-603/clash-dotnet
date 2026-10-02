@@ -313,11 +313,25 @@ The core runs anywhere .NET 10 does. Two subsystems are platform-specific:
 | System proxy + tray shell | ✅ | — | — |
 
 The `redir` and `tproxy` inbounds are Linux-only; the desktop tray shell is
-Windows-only. TUN is not implemented in this build (see the inbound table).
+Windows-only. TUN is **not usable yet**: the Windows driver session, the
+elevation check and the route handling are in place (`src/Clash.Core/Tun`), but
+the accept side of the userspace TCP stack, the datagram path and the `tun:`
+configuration are still missing, so nothing is wired up. See the inbound table.
 
 ---
 
 ## Licence
 
+MIT — see [LICENSE](LICENSE).
+
 This is an independent reimplementation. Clash and mihomo are separate projects by
-their own authors; this codebase shares no code with them.
+their own authors; this codebase shares no code with them. The protocol formats it
+implements were written from the specifications and from reading the reference
+implementations as documentation; [docs/reference/protocol-sources.md](docs/reference/protocol-sources.md)
+lists every source consulted, with its licence.
+
+One component is not covered by the MIT grant: `third_party/wintun/amd64/wintun.dll`
+is WireGuard LLC's prebuilt Wintun binary, redistributed under the Prebuilt Binaries
+License that ships with it (kept verbatim beside the DLL, and reproduced in
+[LICENSE](LICENSE)).
+
