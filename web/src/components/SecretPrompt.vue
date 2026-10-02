@@ -2,6 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import { Key, Refresh } from '@element-plus/icons-vue'
 
+import { useI18n } from '@/i18n'
 import { useSettingsStore } from '@/stores/settings'
 
 const props = withDefaults(
@@ -17,6 +18,7 @@ const props = withDefaults(
 const emit = defineEmits<{ retry: [] }>()
 
 const settings = useSettingsStore()
+const { t } = useI18n()
 const draft = ref<string>(settings.secret)
 
 watch(
@@ -29,15 +31,13 @@ watch(
 const visible = computed<boolean>(() => props.unauthorized || props.offline)
 
 const title = computed<string>(() => {
-  if (props.unauthorized) return 'The API secret is missing or incorrect'
-  return 'Cannot reach the Clash API'
+  if (props.unauthorized) return t('secret.unauthorized')
+  return t('secret.unreachable')
 })
 
 const description = computed<string>(() => {
-  if (props.unauthorized) {
-    return 'This Clash instance requires a secret. Enter it below — it is stored locally in your browser and sent as an Authorization header (and as ?token= for WebSockets).'
-  }
-  return `The dashboard could not connect to ${settings.targetLabel}. Check that the backend is running and that the API address is right.`
+  if (props.unauthorized) return t('secret.description')
+  return t('secret.offlineDescription', { target: settings.targetLabel })
 })
 
 function save(): void {
@@ -67,11 +67,11 @@ function retry(): void {
         type="password"
         show-password
         clearable
-        placeholder="API secret"
+        :placeholder="t('secret.placeholder')"
         @keyup.enter="save"
       />
-      <el-button type="primary" :icon="Key" @click="save">Save secret</el-button>
-      <el-button :icon="Refresh" @click="retry">Retry</el-button>
+      <el-button type="primary" :icon="Key" @click="save">{{ t('action.save') }}</el-button>
+      <el-button :icon="Refresh" @click="retry">{{ t('action.retry') }}</el-button>
     </div>
   </div>
 </template>

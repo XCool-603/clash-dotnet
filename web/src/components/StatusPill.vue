@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 
+import { useI18n } from '@/i18n'
+
 const props = withDefaults(
   defineProps<{
     online: boolean
@@ -13,13 +15,19 @@ const props = withDefaults(
   }>(),
   {
     label: '',
-    onlineText: 'Connected',
-    offlineText: 'Disconnected',
+    onlineText: '',
+    offlineText: '',
     pulse: true,
   },
 )
 
-const text = computed<string>(() => props.label || (props.online ? props.onlineText : props.offlineText))
+const { t } = useI18n()
+
+const text = computed<string>(() => {
+  if (props.label) return props.label
+  if (props.online) return props.onlineText || t('status.connected')
+  return props.offlineText || t('status.disconnected')
+})
 </script>
 
 <template>

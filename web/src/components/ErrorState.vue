@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import { Refresh, WarningFilled } from '@element-plus/icons-vue'
 
 import type { ApiError } from '@/api/client'
+import { useI18n } from '@/i18n'
 
 const props = withDefaults(
   defineProps<{
@@ -21,24 +22,25 @@ const props = withDefaults(
 )
 
 const emit = defineEmits<{ retry: [] }>()
+const { t } = useI18n()
 
 const heading = computed<string>(() => {
   if (props.title) return props.title
   const error = props.error
-  if (!error) return 'Something went wrong'
+  if (!error) return t('error.generic')
   switch (error.kind) {
     case 'unauthorized':
-      return 'Authentication required'
+      return t('error.unauthorized')
     case 'network':
-      return 'Backend unreachable'
+      return t('error.network')
     case 'timeout':
-      return 'Request timed out'
+      return t('error.timeout')
     case 'not-found':
-      return 'Not available'
+      return t('error.notFound')
     case 'server':
-      return 'Backend error'
+      return t('error.server')
     default:
-      return 'Request failed'
+      return t('error.failed')
   }
 })
 
@@ -68,7 +70,7 @@ const detail = computed<string | null>(() => {
       :icon="Refresh"
       @click="emit('retry')"
     >
-      Retry
+      {{ t('action.retry') }}
     </el-button>
   </div>
 </template>

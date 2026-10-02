@@ -3,7 +3,8 @@ import { computed } from 'vue'
 import type { CSSProperties } from 'vue'
 
 import { delayColor, delayLevel, formatDelay, withAlpha } from '@/utils/format'
-import { LATENCY_BAND_LABELS, latencyBand } from '@/utils/delay'
+import { latencyBand, type LatencyBand } from '@/utils/delay'
+import { useI18n, type MessageKey } from '@/i18n'
 
 const props = withDefaults(
   defineProps<{
@@ -31,16 +32,26 @@ const props = withDefaults(
   },
 )
 
+const { t } = useI18n()
+
+const BAND_KEYS: Record<LatencyBand, MessageKey> = {
+  good: 'delay.band.good',
+  fair: 'delay.band.fair',
+  bad: 'delay.band.bad',
+  failed: 'delay.band.failed',
+  unknown: 'delay.band.unknown',
+}
+
 const level = computed<string>(() => delayLevel(props.delay, props.probeUrl))
 const color = computed<string>(() => delayColor(props.delay, props.probeUrl))
 const band = computed(() => latencyBand(props.delay, props.probeUrl))
 
 const text = computed<string>(() => {
-  if (props.loading) return 'testing…'
+  if (props.loading) return t('delay.testing')
   if (props.bare) {
     const value = props.delay
     if (value === null || value === undefined || !Number.isFinite(value)) return '—'
-    if (value <= 0) return 'failed'
+    if (value <= 0) return t('delay.failed')
     return String(Math.round(value))
   }
   return formatDelay(props.delay)
@@ -56,9 +67,9 @@ const style = computed<CSSProperties>(() => {
 })
 
 const title = computed<string>(() => {
-  if (props.loading) return 'Health check in progress'
-  if (props.delay === null || props.delay === undefined) return 'No measurement yet'
-  return `${text.value} · ${LATENCY_BAND_LABELS[band.value]}`
+  if (props.loading) return t('delay.inProgress')
+  if (props.delay === null || props.delay === undefined) return t('delay.noMeasurement')
+  return `${text.value} · ${t(BAND_KEYS[band.value])}`
 })
 </script>
 

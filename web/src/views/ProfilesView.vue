@@ -16,6 +16,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import EmptyState from '@/components/EmptyState.vue'
 import ErrorState from '@/components/ErrorState.vue'
 import YamlEditor from '@/components/YamlEditor.vue'
+import { useI18n, type MessageKey } from '@/i18n'
 import { useConfigStore } from '@/stores/config'
 import { useProfilesStore } from '@/stores/profiles'
 import type { Profile } from '@/types'
@@ -23,6 +24,15 @@ import { formatBytes, formatExpiry, formatRelative, percentage } from '@/utils/f
 
 const profiles = useProfilesStore()
 const config = useConfigStore()
+const { t } = useI18n()
+
+/** Preview and edit share one dialog; only the heading and the lock differ. */
+type EditorMode = 'preview' | 'edit'
+
+const EDITOR_TITLES: Record<EditorMode, MessageKey> = {
+  preview: 'profiles.previewTitle',
+  edit: 'profiles.editTitle',
+}
 
 const createOpen = ref(false)
 const createName = ref('')
@@ -33,10 +43,15 @@ const importUrl = ref('')
 const importName = ref('')
 
 const editorOpen = ref(false)
-const editorReadonly = ref(true)
-const editorTitle = ref('')
+const editorMode = ref<EditorMode>('preview')
+const editorProfileName = ref('')
 const editorProfileId = ref('')
 const editorDraft = ref('')
+
+const editorReadonly = computed<boolean>(() => editorMode.value === 'preview')
+const editorTitle = computed<string>(() =>
+  t(EDITOR_TITLES[editorMode.value], { name: editorProfileName.value }),
+)
 
 /** The page needs both the app-level endpoints *and* a meta-capable core. */
 const supported = computed<boolean>(() => config.hasMeta && profiles.available)
@@ -53,8 +68,8 @@ function usageText(profile: Profile): string {
   if (!info) return ''
   const used = (info.upload ?? 0) + (info.download ?? 0)
   const total = info.total ?? 0
-  if (total > 0) return `${formatBytes(used)} of ${formatBytes(total)}`
-  return `${formatBytes(used)} used`
+  if (total > 0) return t('profiles.usageOf', { used: formatBytes(used), total: formatBytes(total) })
+  return t('profiles.usageUsed', { used: formatBytes(used) })
 }
 
 function usagePercent(profile: Profile): number | null {
@@ -72,28 +87,32 @@ async function load(): Promise<void> {
 
 async function activate(profile: Profile): Promise<void> {
   const result = await profiles.select(profile.id)
-  if (result.ok) ElMessage.success(`Activated ${profile.name}`)
+  if (result.ok) ElMessage.success(t('profiles.activatedToast', { name: profile.name }))
   else ElMessage.error(result.error.message)
 }
 
 async function updateRemote(profile: Profile): Promise<void> {
   const result = await profiles.updateRemote(profile.id)
-  if (result.ok) ElMessage.success(`Updated ${profile.name}`)
+  if (result.ok) ElMessage.success(t('profiles.updatedToast', { name: profile.name }))
   else ElMessage.error(result.error.message)
 }
 
 async function remove(profile: Profile): Promise<void> {
   try {
-    await ElMessageBox.confirm(`Delete the profile “${profile.name}”?`, 'Delete profile', {
-      type: 'warning',
-      confirmButtonText: 'Delete',
-      cancelButtonText: 'Cancel',
-    })
+    await ElMessageBox.confirm(
+      t('profiles.deleteConfirm', { name: profile.name }),
+      t('profiles.deleteTitle'),
+      {
+        type: 'warning',
+        confirmButtonText: t('action.delete'),
+        cancelButtonText: t('action.cancel'),
+      },
+    )
   } catch {
     return
   }
   const result = await profiles.remove(profile.id)
-  if (result.ok) ElMessage.success(`Deleted ${profile.name}`)
+  if (result.ok) ElMessage.success(t('profiles.deletedToast', { name: profile.name }))
   else ElMessage.error(result.error.message)
 }
 
@@ -108,13 +127,13 @@ function openCreate(): void {
 async function submitCreate(): Promise<void> {
   const name = createName.value.trim()
   if (name.length === 0) {
-    ElMessage.warning('A profile name is required')
+    ElMessage.warning(t('profiles.nameRequired'))
     return
   }
   const result = await profiles.create({ name, type: 'local', content: createContent.value })
   if (result.ok) {
     createOpen.value = false
-    ElMessage.success(`Created ${name}`)
+    ElMessage.success(t('profiles.createdToast', { name }))
   } else {
     ElMessage.error(result.error.message)
   }
@@ -135,7 +154,7 @@ async function checkSubscription(): Promise<void> {
   const result = await profiles.parseSubscription(url)
   if (result.ok) {
     const count = result.data.count ?? result.data.nodes?.length ?? 0
-    ElMessage.success(`Subscription parsed: ${count} node(s)`)
+    ElMessage.success(t('profiles.parsedToast', { count }))
   } else {
     ElMessage.error(result.error.message)
   }
@@ -144,14 +163,14 @@ async function checkSubscription(): Promise<void> {
 async function submitImport(): Promise<void> {
   const url = importUrl.value.trim()
   if (url.length === 0) {
-    ElMessage.warning('A subscription URL is required')
+    ElMessage.warning(t('profiles.urlRequired'))
     return
   }
   const name = importName.value.trim()
   const result = await profiles.importUrl(url, name.length > 0 ? name : undefined)
   if (result.ok) {
     importOpen.value = false
-    ElMessage.success('Subscription imported')
+    ElMessage.success(t('profiles.importedToast'))
   } else {
     ElMessage.error(result.error.message)
   }
@@ -160,9 +179,9 @@ async function submitImport(): Promise<void> {
 /* ---- YAML editor / preview --------------------------------------- */
 
 async function openEditor(profile: Profile, readonly: boolean): Promise<void> {
-  editorTitle.value = `${readonly ? 'Preview' : 'Edit'} — ${profile.name}`
+  editorMode.value = readonly ? 'preview' : 'edit'
+  editorProfileName.value = profile.name
   editorProfileId.value = profile.id
-  editorReadonly.value = readonly
   editorDraft.value = ''
   editorOpen.value = true
 
@@ -176,7 +195,7 @@ async function saveEditor(): Promise<void> {
   const result = await profiles.saveContent(id, editorDraft.value)
   if (result.ok) {
     editorOpen.value = false
-    ElMessage.success('Profile saved')
+    ElMessage.success(t('profiles.savedToast'))
   } else {
     ElMessage.error(result.error.message)
   }
@@ -191,16 +210,16 @@ onMounted(() => {
   <div class="app-page">
     <div class="app-page__head">
       <div>
-        <h2 class="app-page__title">Profiles</h2>
-        <p class="app-page__subtitle">
-          Local configurations and remote subscriptions, stored by the backend.
-        </p>
+        <h2 class="app-page__title">{{ t('nav.profiles') }}</h2>
+        <p class="app-page__subtitle">{{ t('profiles.subtitle') }}</p>
       </div>
 
       <div v-if="supported" class="toolbar">
-        <el-button :icon="Refresh" :loading="profiles.loading" @click="load">Refresh</el-button>
-        <el-button :icon="Upload" @click="openImport">Import URL</el-button>
-        <el-button type="primary" :icon="Plus" @click="openCreate">New profile</el-button>
+        <el-button :icon="Refresh" :loading="profiles.loading" @click="load">
+          {{ t('action.refresh') }}
+        </el-button>
+        <el-button :icon="Upload" @click="openImport">{{ t('profiles.importUrl') }}</el-button>
+        <el-button type="primary" :icon="Plus" @click="openCreate">{{ t('profiles.new') }}</el-button>
       </div>
     </div>
 
@@ -208,13 +227,18 @@ onMounted(() => {
          gets an explanation, not a broken page. -->
     <EmptyState
       v-if="!supported"
-      title="Profiles are not available on this backend"
+      :title="t('profiles.unavailable.title')"
       :description="
         config.hasMeta
-          ? 'The core is a meta build, but the app-level /profiles endpoints answered 404. Start the dashboard from the Clash.Server host to manage profiles.'
-          : 'GET /version reports meta: false, so this core has no profile or subscription support. Point the dashboard at a mihomo build, or edit the configuration file directly.'
+          ? t('profiles.unavailable.metaCore')
+          : t('profiles.unavailable.stockCore')
       "
-      :hint="`core: ${config.versionLabel} · meta: ${config.hasMeta}`"
+      :hint="
+        t('profiles.unavailable.hint', {
+          version: config.versionLabel,
+          meta: String(config.hasMeta),
+        })
+      "
     />
 
     <template v-else>
@@ -222,12 +246,12 @@ onMounted(() => {
 
       <EmptyState
         v-if="profilesByAge.length === 0 && !profiles.loading"
-        title="No profiles yet"
-        description="Create a local profile or import one from a subscription URL."
+        :title="t('profiles.empty.title')"
+        :description="t('profiles.empty.description')"
       >
         <template #actions>
-          <el-button :icon="Upload" @click="openImport">Import URL</el-button>
-          <el-button type="primary" :icon="Plus" @click="openCreate">New profile</el-button>
+          <el-button :icon="Upload" @click="openImport">{{ t('profiles.importUrl') }}</el-button>
+          <el-button type="primary" :icon="Plus" @click="openCreate">{{ t('profiles.new') }}</el-button>
         </template>
       </EmptyState>
 
@@ -245,12 +269,12 @@ onMounted(() => {
             </el-tag>
             <el-tag v-if="profile.selected" size="small" type="primary" effect="dark">
               <el-icon><Check /></el-icon>
-              active
+              {{ t('profiles.active') }}
             </el-tag>
           </header>
 
           <p class="text-faint profile-card__meta">
-            updated {{ formatRelative(profile.updatedAt) }}
+            {{ t('profiles.updated', { time: formatRelative(profile.updatedAt) }) }}
           </p>
           <p v-if="profile.url" class="text-faint profile-card__meta mono ellipsis">
             {{ profile.url }}
@@ -266,7 +290,7 @@ onMounted(() => {
             <p class="text-faint profile-card__meta">
               {{ usageText(profile) }}
               <template v-if="profile.subscriptionInfo.expire">
-                · expires {{ formatExpiry(profile.subscriptionInfo.expire) }}
+                · {{ t('profiles.expires', { date: formatExpiry(profile.subscriptionInfo.expire) }) }}
               </template>
             </p>
           </div>
@@ -280,10 +304,10 @@ onMounted(() => {
               :loading="profiles.busyId === profile.id"
               @click="activate(profile)"
             >
-              Activate
+              {{ t('profiles.activate') }}
             </el-button>
-            <el-button size="small" :icon="View" @click="openEditor(profile, true)">Preview</el-button>
-            <el-button size="small" :icon="Edit" @click="openEditor(profile, false)">Edit</el-button>
+            <el-button size="small" :icon="View" @click="openEditor(profile, true)">{{ t('profiles.preview') }}</el-button>
+            <el-button size="small" :icon="Edit" @click="openEditor(profile, false)">{{ t('action.edit') }}</el-button>
             <el-button
               v-if="profile.type === 'remote'"
               size="small"
@@ -291,7 +315,7 @@ onMounted(() => {
               :loading="profiles.busyId === profile.id"
               @click="updateRemote(profile)"
             >
-              Update
+              {{ t('action.update') }}
             </el-button>
             <el-button
               size="small"
@@ -301,7 +325,7 @@ onMounted(() => {
               :loading="profiles.busyId === profile.id"
               @click="remove(profile)"
             >
-              Delete
+              {{ t('action.delete') }}
             </el-button>
           </div>
         </article>
@@ -309,29 +333,29 @@ onMounted(() => {
     </template>
 
     <!-- create -->
-    <el-dialog v-model="createOpen" title="New local profile" width="720px" append-to-body>
+    <el-dialog v-model="createOpen" :title="t('profiles.create.title')" width="720px" append-to-body>
       <el-form label-position="top">
-        <el-form-item label="Name">
-          <el-input v-model="createName" placeholder="my-config" />
+        <el-form-item :label="t('profiles.create.name')">
+          <el-input v-model="createName" :placeholder="t('profiles.create.namePlaceholder')" />
         </el-form-item>
-        <el-form-item label="YAML content">
+        <el-form-item :label="t('profiles.create.content')">
           <YamlEditor v-model="createContent" :min-height="320" />
         </el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="createOpen = false">Cancel</el-button>
-        <el-button type="primary" :loading="profiles.saving" @click="submitCreate">Create</el-button>
+        <el-button @click="createOpen = false">{{ t('action.cancel') }}</el-button>
+        <el-button type="primary" :loading="profiles.saving" @click="submitCreate">{{ t('profiles.create.submit') }}</el-button>
       </template>
     </el-dialog>
 
     <!-- import -->
-    <el-dialog v-model="importOpen" title="Import from subscription URL" width="560px" append-to-body>
+    <el-dialog v-model="importOpen" :title="t('profiles.import.title')" width="560px" append-to-body>
       <el-form label-position="top">
-        <el-form-item label="Subscription URL">
-          <el-input v-model="importUrl" placeholder="https://example.com/sub?token=…" clearable />
+        <el-form-item :label="t('profiles.import.url')">
+          <el-input v-model="importUrl" :placeholder="t('profiles.import.urlPlaceholder')" clearable />
         </el-form-item>
-        <el-form-item label="Name (optional)">
-          <el-input v-model="importName" placeholder="Derived from the URL when empty" clearable />
+        <el-form-item :label="t('profiles.import.name')">
+          <el-input v-model="importName" :placeholder="t('profiles.import.namePlaceholder')" clearable />
         </el-form-item>
       </el-form>
 
@@ -340,7 +364,7 @@ onMounted(() => {
         type="success"
         :closable="false"
         show-icon
-        :title="`Parsed ${profiles.parsedSubscription.count ?? profiles.parsedSubscription.nodes?.length ?? 0} node(s)`"
+        :title="t('profiles.import.parsed', { count: profiles.parsedSubscription.count ?? profiles.parsedSubscription.nodes?.length ?? 0 })"
       />
       <ErrorState
         v-if="profiles.parseError"
@@ -351,11 +375,11 @@ onMounted(() => {
 
       <template #footer>
         <el-button :icon="Search" :loading="profiles.parsing" @click="checkSubscription">
-          Check URL
+          {{ t('profiles.import.check') }}
         </el-button>
-        <el-button @click="importOpen = false">Cancel</el-button>
+        <el-button @click="importOpen = false">{{ t('action.cancel') }}</el-button>
         <el-button type="primary" :loading="profiles.importing" @click="submitImport">
-          Import
+          {{ t('action.import') }}
         </el-button>
       </template>
     </el-dialog>
@@ -371,12 +395,12 @@ onMounted(() => {
           :error="profiles.previewError"
         />
         <div v-else-if="profiles.previewLoading" class="editor-loading text-muted">
-          Loading profile…
+          {{ t('profiles.loading') }}
         </div>
         <YamlEditor v-else v-model="editorDraft" :readonly="editorReadonly" :min-height="440" />
       </div>
       <template #footer>
-        <el-button @click="editorOpen = false">Close</el-button>
+        <el-button @click="editorOpen = false">{{ t('action.close') }}</el-button>
         <el-button
           v-if="!editorReadonly"
           type="primary"
@@ -384,7 +408,7 @@ onMounted(() => {
           :loading="profiles.saving"
           @click="saveEditor"
         >
-          Save
+          {{ t('action.save') }}
         </el-button>
       </template>
     </el-dialog>

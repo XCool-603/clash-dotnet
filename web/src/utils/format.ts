@@ -66,20 +66,28 @@ export function formatDateTime(value: string | number | Date | null | undefined)
   return `${y}-${mo}-${d} ${h}:${mi}:${s}`
 }
 
-/** Human "3 minutes ago" style relative time. */
+import { t } from '@/i18n'
+
+/**
+ * Human "3 minutes ago" style relative time, in the active language.
+ *
+ * Reads the i18n catalogue directly rather than taking a formatter argument, so
+ * every caller (and every computed that renders it) follows the language
+ * switcher without threading a `t` through the component tree.
+ */
 export function formatRelative(value: string | number | Date | null | undefined): string {
   const date = toDate(value)
   if (!date) return '—'
   const diff = Date.now() - date.getTime()
-  if (diff < 0) return 'just now'
+  if (diff < 0) return t('time.justNow')
   const seconds = Math.floor(diff / 1000)
-  if (seconds < 45) return 'just now'
+  if (seconds < 45) return t('time.justNow')
   const minutes = Math.floor(seconds / 60)
-  if (minutes < 60) return `${minutes} min ago`
+  if (minutes < 60) return t('time.minutesAgo', { count: minutes })
   const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `${hours} h ago`
+  if (hours < 24) return t('time.hoursAgo', { count: hours })
   const days = Math.floor(hours / 24)
-  if (days < 30) return `${days} d ago`
+  if (days < 30) return t('time.daysAgo', { count: days })
   return formatDateTime(date)
 }
 
@@ -142,7 +150,7 @@ export function withAlpha(hex: string, alpha: number): string {
 /** Render a delay value as a short human label. */
 export function formatDelay(delay: number | null | undefined): string {
   if (delay === null || delay === undefined || !Number.isFinite(delay)) return '—'
-  if (delay <= 0) return 'failed'
+  if (delay <= 0) return t('delay.failed')
   return `${Math.round(delay)} ms`
 }
 

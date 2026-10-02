@@ -5,6 +5,7 @@ import { Delete, Search, SwitchButton, VideoPause, VideoPlay } from '@element-pl
 import EmptyState from '@/components/EmptyState.vue'
 import StatusPill from '@/components/StatusPill.vue'
 import { useLogsStream } from '@/composables/useLogsStream'
+import { useI18n, type MessageKey } from '@/i18n'
 import { LOG_BUFFER_LIMIT, normalizeLogLevel, useLogsStore } from '@/stores/logs'
 import type { LogEntry, LogLevel } from '@/types'
 import { LOG_LEVELS } from '@/types'
@@ -14,20 +15,21 @@ import type { StreamStatus } from '@/utils/ws'
 /** The viewport never renders more than this many lines at once. */
 const RENDER_LIMIT = 500
 
-const STATUS_LABEL: Record<StreamStatus, string> = {
-  idle: 'Stream idle',
-  connecting: 'Connecting…',
-  open: 'Streaming',
-  reconnecting: 'Reconnecting…',
-  stopped: 'Stopped',
+const STATUS_LABEL: Record<StreamStatus, MessageKey> = {
+  idle: 'logs.status.idle',
+  connecting: 'logs.status.connecting',
+  open: 'logs.status.open',
+  reconnecting: 'logs.status.reconnecting',
+  stopped: 'logs.status.stopped',
 }
 
 const logs = useLogsStore()
 const stream = useLogsStream()
+const { t } = useI18n()
 
 const viewport = ref<HTMLDivElement | null>(null)
 
-const statusLabel = computed<string>(() => STATUS_LABEL[logs.status])
+const statusLabel = computed<string>(() => t(STATUS_LABEL[logs.status]))
 const streaming = computed<boolean>(() => logs.status !== 'stopped')
 
 /** Only the tail of the filtered buffer is rendered, so the DOM stays bounded. */
@@ -46,10 +48,10 @@ const truncated = computed<number>(() => Math.max(0, logs.visibleCount - entries
 const newestId = computed<number>(() => entries.value[entries.value.length - 1]?.id ?? 0)
 
 const emptyDescription = computed<string>(() => {
-  if (logs.paused) return 'Live updates are paused. Resume to follow new lines.'
-  if (logs.bufferedCount > 0) return 'No buffered line matches the current level and search filter.'
-  if (logs.connected) return 'Connected — waiting for the core to emit a log line.'
-  return 'The log stream is not connected. Start it, or check the API address in Settings.'
+  if (logs.paused) return t('logs.emptyPaused')
+  if (logs.bufferedCount > 0) return t('logs.emptyFiltered')
+  if (logs.connected) return t('logs.emptyWaiting')
+  return t('logs.emptyDisconnected')
 })
 
 function levelClass(type: string): string {
@@ -104,10 +106,9 @@ onMounted(() => {
   <div class="app-page logs-page">
     <div class="app-page__head">
       <div>
-        <h2 class="app-page__title">Logs</h2>
+        <h2 class="app-page__title">{{ t('nav.logs') }}</h2>
         <p class="app-page__subtitle">
-          Live core log over <code>WS /logs?level={{ logs.level }}</code> ·
-          {{ logs.bufferedCount }} buffered · {{ logs.visibleCount }} matching
+          {{ t('logs.subtitleBefore') }}<code>WS /logs?level={{ logs.level }}</code>{{ t('logs.subtitleAfter', { buffered: logs.bufferedCount, matching: logs.visibleCount }) }}
         </p>
       </div>
 
@@ -117,7 +118,7 @@ onMounted(() => {
         <el-select
           class="toolbar__level"
           :model-value="logs.level"
-          aria-label="Log level"
+          :aria-label="t('logs.levelLabel')"
           @change="onLevelChange"
         >
           <el-option v-for="level in LOG_LEVELS" :key="level" :label="level" :value="level" />
@@ -127,7 +128,7 @@ onMounted(() => {
           v-model="logs.search"
           class="toolbar__search"
           :prefix-icon="Search"
-          placeholder="Search payload…"
+          :placeholder="t('logs.searchPlaceholder')"
           clearable
         />
 
@@ -136,34 +137,34 @@ onMounted(() => {
           :type="logs.paused ? 'warning' : 'default'"
           @click="togglePause"
         >
-          {{ logs.paused ? 'Resume' : 'Pause' }}
+          {{ logs.paused ? t('logs.resume') : t('logs.pause') }}
         </el-button>
         <el-button :icon="SwitchButton" @click="toggleStream">
-          {{ streaming ? 'Stop stream' : 'Start stream' }}
+          {{ streaming ? t('logs.stopStream') : t('logs.startStream') }}
         </el-button>
         <el-button :icon="Delete" :disabled="logs.bufferedCount === 0" @click="logs.clear()">
-          Clear
+          {{ t('action.clear') }}
         </el-button>
       </div>
     </div>
 
     <div class="log-toolbar">
-      <el-checkbox v-model="logs.autoScroll">Auto-scroll</el-checkbox>
+      <el-checkbox v-model="logs.autoScroll">{{ t('logs.autoScroll') }}</el-checkbox>
       <span class="text-faint">
-        {{ entries.length }} of {{ logs.visibleCount }} line(s) rendered
-        <template v-if="truncated > 0"> · showing the last {{ RENDER_LIMIT }}</template>
-        · buffer {{ logs.bufferedCount }} / {{ LOG_BUFFER_LIMIT }}
+        {{ t('logs.rendered', { shown: entries.length, total: logs.visibleCount }) }}
+        <template v-if="truncated > 0">{{ t('logs.showingLast', { count: RENDER_LIMIT }) }}</template>
+        {{ t('logs.buffer', { used: logs.bufferedCount, limit: LOG_BUFFER_LIMIT }) }}
         <template v-if="logs.droppedCount > 0">
-          · {{ logs.droppedCount }} oldest line(s) dropped
+          {{ t('logs.dropped', { count: logs.droppedCount }) }}
         </template>
-        <template v-if="logs.paused"> · paused, new lines keep buffering</template>
+        <template v-if="logs.paused">{{ t('logs.pausedNote') }}</template>
       </span>
       <span class="grow" />
-      <span class="text-faint">{{ logs.level }} and above</span>
+      <span class="text-faint">{{ t('logs.levelAndAbove', { level: logs.level }) }}</span>
     </div>
 
     <div ref="viewport" class="log-viewport">
-      <EmptyState v-if="entries.length === 0" title="No log lines" :description="emptyDescription" />
+      <EmptyState v-if="entries.length === 0" :title="t('logs.emptyTitle')" :description="emptyDescription" />
 
       <div
         v-for="entry in entries"

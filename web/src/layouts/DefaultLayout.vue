@@ -21,6 +21,8 @@ import ModeSwitcher from '@/components/ModeSwitcher.vue'
 import StatusPill from '@/components/StatusPill.vue'
 import { useMemoryStream } from '@/composables/useMemoryStream'
 import { useTrafficStream } from '@/composables/useTrafficStream'
+import { useI18n, type Locale, type MessageKey } from '@/i18n'
+import { titleKeyOf } from '@/router'
 import { CONNECTIONS_IDLE_INTERVAL, useConnectionsStore } from '@/stores/connections'
 import { useConfigStore } from '@/stores/config'
 import { useSettingsStore } from '@/stores/settings'
@@ -28,7 +30,7 @@ import type { ClashMode } from '@/types'
 
 interface NavItem {
   to: string
-  label: string
+  labelKey: MessageKey
   icon: Component
 }
 
@@ -36,31 +38,32 @@ const settings = useSettingsStore()
 const config = useConfigStore()
 const connections = useConnectionsStore()
 const route = useRoute()
+const { t, locale, localeInfo, locales, setLocale } = useI18n()
 
 const navItems: NavItem[] = [
-  { to: '/', label: 'Dashboard', icon: Odometer },
-  { to: '/proxies', label: 'Proxies', icon: Connection },
-  { to: '/profiles', label: 'Profiles', icon: Files },
-  { to: '/connections', label: 'Connections', icon: Link },
-  { to: '/rules', label: 'Rules', icon: Guide },
-  { to: '/logs', label: 'Logs', icon: Document },
-  { to: '/settings', label: 'Settings', icon: Setting },
+  { to: '/', labelKey: 'nav.dashboard', icon: Odometer },
+  { to: '/proxies', labelKey: 'nav.proxies', icon: Connection },
+  { to: '/profiles', labelKey: 'nav.profiles', icon: Files },
+  { to: '/connections', labelKey: 'nav.connections', icon: Link },
+  { to: '/rules', labelKey: 'nav.rules', icon: Guide },
+  { to: '/logs', labelKey: 'nav.logs', icon: Document },
+  { to: '/settings', labelKey: 'nav.settings', icon: Setting },
 ]
 
 const collapsed = computed<boolean>(() => settings.sidebarCollapsed)
 const themeIcon = computed<Component>(() => (settings.theme === 'dark' ? Sunny : Moon))
 const themeLabel = computed<string>(() =>
-  settings.theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme',
+  settings.theme === 'dark' ? t('topbar.themeToLight') : t('topbar.themeToDark'),
 )
 const pageTitle = computed<string>(() => {
-  const title = route.meta.title
-  return typeof title === 'string' && title.length > 0 ? title : 'Clash'
+  const key = titleKeyOf(route.meta)
+  return key ? t(key) : 'Clash'
 })
 const coreLabel = computed<string>(() => (config.hasMeta ? 'mihomo' : 'core'))
 const statusLabel = computed<string>(() => {
-  if (config.unauthorized) return 'Secret required'
-  if (config.online) return 'Connected'
-  return 'Disconnected'
+  if (config.unauthorized) return t('status.secretRequired')
+  if (config.online) return t('status.connected')
+  return t('status.disconnected')
 })
 
 /**
@@ -86,6 +89,11 @@ async function onModeChange(mode: ClashMode): Promise<void> {
   const result = await config.setMode(mode)
   if (!result.ok) ElMessage.error(result.error.message)
 }
+
+function onLocaleChange(next: Locale): void {
+  setLocale(next)
+  settings.setLocale(next)
+}
 </script>
 
 <template>
@@ -94,8 +102,8 @@ async function onModeChange(mode: ClashMode): Promise<void> {
       <div class="brand">
         <span class="brand__mark">C</span>
         <span v-if="!collapsed" class="brand__text">
-          <strong>Clash</strong>
-          <small>dashboard</small>
+          <strong>{{ t('brand.name') }}</strong>
+          <small>{{ t('brand.subtitle') }}</small>
         </span>
       </div>
 
@@ -105,10 +113,10 @@ async function onModeChange(mode: ClashMode): Promise<void> {
           :key="item.to"
           :to="item.to"
           class="nav__item"
-          :title="collapsed ? item.label : undefined"
+          :title="collapsed ? t(item.labelKey) : undefined"
         >
           <el-icon class="nav__icon"><component :is="item.icon" /></el-icon>
-          <span v-if="!collapsed" class="nav__label">{{ item.label }}</span>
+          <span v-if="!collapsed" class="nav__label">{{ t(item.labelKey) }}</span>
         </RouterLink>
       </nav>
 
@@ -130,29 +138,46 @@ async function onModeChange(mode: ClashMode): Promise<void> {
           class="topbar__collapse"
           text
           :icon="collapsed ? Expand : Fold"
-          :aria-label="collapsed ? 'Expand sidebar' : 'Collapse sidebar'"
+          :aria-label="collapsed ? t('topbar.expandSidebar') : t('topbar.collapseSidebar')"
           @click="settings.toggleSidebar()"
         />
         <h1 class="topbar__title">{{ pageTitle }}</h1>
 
         <div class="topbar__meta">
-          <el-tooltip :content="`Core version: ${config.versionLabel}`" placement="bottom">
+          <el-tooltip :content="t('topbar.coreVersion', { version: config.versionLabel })" placement="bottom">
             <el-tag class="mono" size="small" type="info" effect="plain">
               {{ config.versionLabel }}
             </el-tag>
           </el-tooltip>
           <el-tooltip
-            :content="
-              config.hasMeta
-                ? 'MetaCubeX (mihomo) core — profiles and rule toggles are available'
-                : 'Stock core — profiles and per-rule toggles are not available'
-            "
+            :content="config.hasMeta ? t('topbar.metaCore') : t('topbar.stockCore')"
             placement="bottom"
           >
             <el-tag size="small" :type="config.hasMeta ? 'success' : 'warning'" effect="plain">
               {{ coreLabel }}
             </el-tag>
           </el-tooltip>
+
+          <!-- Language switcher: each entry is written in its own language, which
+               is how a reader who cannot read the current one finds theirs. -->
+          <el-dropdown trigger="click" @command="onLocaleChange">
+            <el-button text class="topbar__locale" :title="t('topbar.language')" :aria-label="t('topbar.language')">
+              {{ localeInfo.label }}
+            </el-button>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item
+                  v-for="entry in locales"
+                  :key="entry.value"
+                  :command="entry.value"
+                  :disabled="entry.value === locale"
+                >
+                  {{ entry.label }}
+                </el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
+
           <el-button
             text
             :icon="themeIcon"

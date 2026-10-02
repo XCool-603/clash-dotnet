@@ -8,6 +8,7 @@ import type { GridComponentOption, TooltipComponentOption } from 'echarts/compon
 import { use, type ComposeOption } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
 
+import { useI18n, type MessageKey } from '@/i18n'
 import { useSettingsStore } from '@/stores/settings'
 import { formatBytes } from '@/utils/format'
 
@@ -31,7 +32,14 @@ const props = withDefaults(
 
 const MEMORY_COLOR = '#14b8a6'
 
+/** The chart's own labels are catalogue keys, translated at render time. */
+const LABELS: Record<'series' | 'limit', MessageKey> = {
+  series: 'dashboard.memory',
+  limit: 'dashboard.osLimit',
+}
+
 const settings = useSettingsStore()
+const { t } = useI18n()
 const isDark = computed<boolean>(() => settings.theme === 'dark')
 
 const hasTimeAxis = computed<boolean>(
@@ -104,7 +112,7 @@ const option = computed<MemoryChartOption>(() => ({
   },
   series: [
     {
-      name: 'Memory',
+      name: t(LABELS.series),
       type: 'line',
       smooth: true,
       showSymbol: false,
@@ -130,7 +138,7 @@ const option = computed<MemoryChartOption>(() => ({
           ? {
               silent: true,
               symbol: 'none',
-              label: { formatter: 'OS limit', color: axisColor.value, fontSize: 10 },
+              label: { formatter: t(LABELS.limit), color: axisColor.value, fontSize: 10 },
               lineStyle: { color: '#f97316', type: 'dashed', width: 1 },
               data: [{ yAxis: props.limit }],
             }

@@ -24,6 +24,7 @@ type HeaderCellRendererParams<T> = Parameters<NonNullable<Column<T>['headerCellR
 import ConnectionCell from '@/components/ConnectionCell.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import ErrorState from '@/components/ErrorState.vue'
+import { useI18n, type MessageKey } from '@/i18n'
 import { CONNECTIONS_FAST_INTERVAL, CONNECTIONS_IDLE_INTERVAL, useConnectionsStore } from '@/stores/connections'
 import type { Connection, ConnectionMetadata } from '@/types'
 import { formatBytes, formatDuration, truncateMiddle } from '@/utils/format'
@@ -64,6 +65,7 @@ interface ConnectionRow {
 }
 
 const connections = useConnectionsStore()
+const { t } = useI18n()
 
 const tab = ref<Tab>('active')
 const search = ref('')
@@ -173,11 +175,12 @@ function toggleSort(key: SortKey): void {
 
 /** Stable-identity header renderer with a sort affordance. */
 function headerRenderer(
-  label: string,
+  labelKey: MessageKey,
   key: SortKey,
   activeKey: SortKey,
   direction: SortDirection,
 ) {
+  const label = t(labelKey)
   return (_params: HeaderCellRendererParams<ConnectionRow>): VNode =>
     h(
       'div',
@@ -185,7 +188,7 @@ function headerRenderer(
         class: 'th',
         role: 'button',
         tabindex: 0,
-        title: `Sort by ${label}`,
+        title: t('connections.sortBy', { column: label }),
         onClick: () => toggleSort(key),
         onKeydown: (event: KeyboardEvent) => {
           if (event.key === 'Enter' || event.key === ' ') toggleSort(key)
@@ -223,32 +226,32 @@ const columns = computed<Column<ConnectionRow>[]>(() => {
 
   const column = (
     key: SortKey,
-    label: string,
+    labelKey: MessageKey,
     width: number,
     render: (row: ConnectionRow) => VNodeChild,
   ): Column<ConnectionRow> => ({
     key,
     dataKey: key,
-    title: label,
+    title: t(labelKey),
     width,
-    headerCellRenderer: headerRenderer(label, key, activeKey, direction),
+    headerCellRenderer: headerRenderer(labelKey, key, activeKey, direction),
     cellRenderer: cell(render),
   })
 
   return [
-    column('host', 'Host', 200, (row) => text(row.host)),
-    column('network', 'Net', 70, (row) =>
+    column('host', 'connections.column.host', 200, (row) => text(row.host)),
+    column('network', 'connections.column.network', 70, (row) =>
       h('span', { class: ['pill', `pill--${row.network}`] }, row.network || '—'),
     ),
-    column('type', 'Type', 100, (row) => text(row.type)),
-    column('chains', 'Chains', 170, (row) => text(row.chains)),
-    column('rule', 'Rule', 150, (row) => text(row.rule)),
-    column('upload', 'Upload', 90, (row) => text(formatBytes(row.upload), true)),
-    column('download', 'Download', 100, (row) => text(formatBytes(row.download), true)),
-    column('durationMs', 'Duration', 90, (row) => text(formatDuration(row.durationMs), true)),
-    column('source', 'Source', 140, (row) => text(row.source)),
-    column('destination', 'Destination', 140, (row) => text(row.destination)),
-    column('process', 'Process', 150, (row) => text(truncateMiddle(row.process, 26))),
+    column('type', 'connections.column.type', 100, (row) => text(row.type)),
+    column('chains', 'connections.column.chains', 170, (row) => text(row.chains)),
+    column('rule', 'connections.column.rule', 150, (row) => text(row.rule)),
+    column('upload', 'connections.column.upload', 90, (row) => text(formatBytes(row.upload), true)),
+    column('download', 'connections.column.download', 100, (row) => text(formatBytes(row.download), true)),
+    column('durationMs', 'connections.column.duration', 90, (row) => text(formatDuration(row.durationMs), true)),
+    column('source', 'connections.column.source', 140, (row) => text(row.source)),
+    column('destination', 'connections.column.destination', 140, (row) => text(row.destination)),
+    column('process', 'connections.column.process', 150, (row) => text(truncateMiddle(row.process, 26))),
     {
       key: 'actions',
       width: 104,
@@ -261,8 +264,8 @@ const columns = computed<Column<ConnectionRow>[]>(() => {
             {
               type: 'button',
               class: 'row-action',
-              title: 'Details',
-              'aria-label': `Details for ${row.host}`,
+              title: t('action.details'),
+              'aria-label': t('connections.detailsFor', { host: row.host }),
               onClick: () => {
                 detail.value = row
                 detailOpen.value = true
@@ -277,8 +280,8 @@ const columns = computed<Column<ConnectionRow>[]>(() => {
                 {
                   type: 'button',
                   class: 'row-action row-action--danger',
-                  title: 'Close connection',
-                  'aria-label': `Close connection to ${row.host}`,
+                  title: t('connections.closeConnection'),
+                  'aria-label': t('connections.closeConnectionTo', { host: row.host }),
                   onClick: () => void closeRow(row),
                 },
                 '✕',
@@ -289,38 +292,38 @@ const columns = computed<Column<ConnectionRow>[]>(() => {
   ]
 })
 
-const detailRows = computed<{ label: string; value: string }[]>(() => {
+const detailRows = computed<{ labelKey: MessageKey; value: string }[]>(() => {
   const row = detail.value
   if (!row) return []
   const md = (row.connection.metadata ?? {}) as Partial<ConnectionMetadata>
-  const entries: [string, string][] = [
-    ['ID', row.connection.id],
-    ['Host', row.host],
-    ['Network', row.network],
-    ['Type', row.type],
-    ['Chains', row.chains],
-    ['Rule', row.rule],
-    ['Rule payload', row.connection.rulePayload || '—'],
-    ['Upload', formatBytes(row.upload)],
-    ['Download', formatBytes(row.download)],
-    ['Duration', formatDuration(row.durationMs)],
-    ['Started', row.connection.start],
-    ['Source', row.source],
-    ['Destination', row.destination],
-    ['Destination port', md.destinationPort ?? '—'],
-    ['DNS mode', md.dnsMode ?? '—'],
-    ['Sniff host', md.sniffHost ?? '—'],
-    ['Process', md.process ?? '—'],
-    ['Process path', md.processPath ?? '—'],
-    ['Remote destination', md.remoteDestination ?? '—'],
-    ['Special proxy', md.specialProxy ?? '—'],
-    ['Special rules', md.specialRules ?? '—'],
-    ['Inbound', md.inboundName ?? '—'],
-    ['Inbound user', md.inboundUser ?? '—'],
+  const entries: [MessageKey, string][] = [
+    ['connections.detail.id', row.connection.id],
+    ['connections.column.host', row.host],
+    ['connections.detail.network', row.network],
+    ['connections.column.type', row.type],
+    ['connections.column.chains', row.chains],
+    ['connections.column.rule', row.rule],
+    ['connections.detail.rulePayload', row.connection.rulePayload || '—'],
+    ['connections.column.upload', formatBytes(row.upload)],
+    ['connections.column.download', formatBytes(row.download)],
+    ['connections.column.duration', formatDuration(row.durationMs)],
+    ['connections.detail.started', row.connection.start],
+    ['connections.column.source', row.source],
+    ['connections.column.destination', row.destination],
+    ['connections.detail.destinationPort', md.destinationPort ?? '—'],
+    ['connections.detail.dnsMode', md.dnsMode ?? '—'],
+    ['connections.detail.sniffHost', md.sniffHost ?? '—'],
+    ['connections.column.process', md.process ?? '—'],
+    ['connections.detail.processPath', md.processPath ?? '—'],
+    ['connections.detail.remoteDestination', md.remoteDestination ?? '—'],
+    ['connections.detail.specialProxy', md.specialProxy ?? '—'],
+    ['connections.detail.specialRules', md.specialRules ?? '—'],
+    ['connections.detail.inbound', md.inboundName ?? '—'],
+    ['connections.detail.inboundUser', md.inboundUser ?? '—'],
   ]
   return entries
     .filter(([, value]) => value !== undefined && value !== null && String(value).length > 0)
-    .map(([label, value]) => ({ label, value: String(value) }))
+    .map(([labelKey, value]) => ({ labelKey, value: String(value) }))
 })
 
 async function closeRow(row: ConnectionRow): Promise<void> {
@@ -331,15 +334,19 @@ async function closeRow(row: ConnectionRow): Promise<void> {
 async function closeAll(): Promise<void> {
   try {
     await ElMessageBox.confirm(
-      `Close all ${connections.activeCount} active connection(s)?`,
-      'Close all connections',
-      { type: 'warning', confirmButtonText: 'Close all', cancelButtonText: 'Cancel' },
+      t('connections.closeAllConfirm', { count: connections.activeCount }),
+      t('connections.closeAllTitle'),
+      {
+        type: 'warning',
+        confirmButtonText: t('connections.closeAll'),
+        cancelButtonText: t('action.cancel'),
+      },
     )
   } catch {
     return
   }
   const result = await connections.closeAll()
-  if (result.ok) ElMessage.success('All connections closed')
+  if (result.ok) ElMessage.success(t('connections.closeAllDone'))
   else ElMessage.error(result.error.message)
 }
 
@@ -364,31 +371,35 @@ onUnmounted(() => {
   <div class="app-page connections-page">
     <div class="app-page__head">
       <div>
-        <h2 class="app-page__title">Connections</h2>
+        <h2 class="app-page__title">{{ t('nav.connections') }}</h2>
         <p class="app-page__subtitle">
-          {{ connections.activeCount }} active ·
-          {{ connections.closedVisible.length }} in history ·
-          total {{ formatBytes(connections.downloadTotal) }} down /
-          {{ formatBytes(connections.uploadTotal) }} up
+          {{ t('connections.active', { count: connections.activeCount }) }} ·
+          {{ t('connections.history', { count: connections.closedVisible.length }) }} ·
+          {{
+            t('connections.totalTraffic', {
+              down: formatBytes(connections.downloadTotal),
+              up: formatBytes(connections.uploadTotal),
+            })
+          }}
         </p>
       </div>
 
       <div class="toolbar">
         <el-radio-group v-model="tab" size="default">
           <el-radio-button value="active">
-            Active ({{ connections.activeCount }})
+            {{ t('connections.tabActive', { count: connections.activeCount }) }}
           </el-radio-button>
           <el-radio-button value="closed">
-            Closed ({{ connections.closedVisible.length }})
+            {{ t('connections.tabClosed', { count: connections.closedVisible.length }) }}
           </el-radio-button>
-          <el-radio-button value="all">All</el-radio-button>
+          <el-radio-button value="all">{{ t('connections.tabAll') }}</el-radio-button>
         </el-radio-group>
 
         <el-input
           v-model="search"
           class="toolbar__search"
           :prefix-icon="Search"
-          placeholder="Search host, rule, chain, process…"
+          :placeholder="t('connections.searchPlaceholder')"
           clearable
         />
 
@@ -397,16 +408,16 @@ onUnmounted(() => {
           :type="connections.paused ? 'warning' : 'default'"
           @click="togglePause"
         >
-          {{ connections.paused ? 'Resume' : 'Pause' }}
+          {{ connections.paused ? t('connections.resume') : t('connections.pause') }}
         </el-button>
         <el-button
           :icon="Delete"
           :disabled="connections.activeCount === 0"
           @click="closeAll"
         >
-          Close all
+          {{ t('connections.closeAll') }}
         </el-button>
-        <el-button :icon="Refresh" @click="connections.load()">Refresh</el-button>
+        <el-button :icon="Refresh" @click="connections.load()">{{ t('action.refresh') }}</el-button>
       </div>
     </div>
 
@@ -420,13 +431,18 @@ onUnmounted(() => {
 
     <div class="table-toolbar">
       <span class="text-faint">
-        {{ sortedRows.length }} row(s)
-        <template v-if="truncated > 0"> · showing the first {{ RENDER_LIMIT }}</template>
-        · {{ connections.paused ? 'paused' : `live @ ${connections.pollingInterval} ms` }}
+        {{ t('count.lines', { count: sortedRows.length }) }}
+        <template v-if="truncated > 0"> · {{ t('connections.showingFirst', { limit: RENDER_LIMIT }) }}</template>
+        ·
+        {{
+          connections.paused
+            ? t('connections.paused')
+            : t('connections.liveAt', { interval: connections.pollingInterval })
+        }}
       </span>
       <span class="grow" />
       <el-button v-if="tab !== 'active'" size="small" text @click="clearHistory">
-        Clear history
+        {{ t('connections.clearHistory') }}
       </el-button>
     </div>
 
@@ -447,18 +463,18 @@ onUnmounted(() => {
       />
       <EmptyState
         v-else
-        title="No connections"
+        :title="t('connections.emptyTitle')"
         :description="
           connections.paused
-            ? 'Live updates are paused. Resume to see new connections.'
-            : 'Nothing is going through the proxy right now.'
+            ? t('connections.emptyPaused')
+            : t('connections.emptyDescription')
         "
       />
     </div>
 
-    <el-drawer v-model="detailOpen" size="520px" title="Connection detail" append-to-body>
+    <el-drawer v-model="detailOpen" size="520px" :title="t('connections.detailTitle')" append-to-body>
       <el-descriptions v-if="detail" :column="1" border size="small">
-        <el-descriptions-item v-for="entry in detailRows" :key="entry.label" :label="entry.label">
+        <el-descriptions-item v-for="entry in detailRows" :key="entry.labelKey" :label="t(entry.labelKey)">
           <span class="mono detail-value">{{ entry.value }}</span>
         </el-descriptions-item>
       </el-descriptions>
@@ -470,9 +486,9 @@ onUnmounted(() => {
           :icon="Close"
           @click="detail && closeRow(detail)"
         >
-          Close connection
+          {{ t('connections.closeConnection') }}
         </el-button>
-        <el-button @click="detailOpen = false">Done</el-button>
+        <el-button @click="detailOpen = false">{{ t('action.close') }}</el-button>
       </template>
     </el-drawer>
   </div>

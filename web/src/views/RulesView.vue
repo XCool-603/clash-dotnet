@@ -5,6 +5,7 @@ import { ElMessage } from 'element-plus'
 
 import EmptyState from '@/components/EmptyState.vue'
 import ErrorState from '@/components/ErrorState.vue'
+import { useI18n } from '@/i18n'
 import { ruleKey, useRulesStore } from '@/stores/rules'
 import type { Rule, RuleProvider } from '@/types'
 import { formatRelative } from '@/utils/format'
@@ -27,6 +28,7 @@ interface RuleRow {
 }
 
 const rules = useRulesStore()
+const { t } = useI18n()
 
 const search = ref('')
 const onlyDisabled = ref(false)
@@ -124,7 +126,7 @@ async function toggleRule(row: RuleRow, disabled: boolean): Promise<void> {
 
 async function updateProvider(name: string): Promise<void> {
   const result = await rules.updateProvider(name)
-  if (result.ok) ElMessage.success(`Updated provider ${name}`)
+  if (result.ok) ElMessage.success(t('rules.providerUpdated', { name }))
   else ElMessage.error(result.error.message)
 }
 
@@ -135,7 +137,7 @@ async function updateAll(): Promise<void> {
 
   const failure = rules.providerError
   if (failure) ElMessage.error(failure.message)
-  else ElMessage.success('Rule providers updated')
+  else ElMessage.success(t('rules.providersUpdated'))
 }
 
 onMounted(() => {
@@ -147,12 +149,12 @@ onMounted(() => {
   <div class="app-page">
     <div class="app-page__head">
       <div>
-        <h2 class="app-page__title">Rules</h2>
+        <h2 class="app-page__title">{{ t('nav.rules') }}</h2>
         <p class="app-page__subtitle">
-          {{ rules.totalCount }} rule(s) in evaluation order ·
-          {{ rules.disabledCount }} disabled
+          {{ t('rules.totalInOrder', { count: rules.totalCount }) }} ·
+          {{ t('rules.disabledCount', { count: rules.disabledCount }) }}
           <template v-if="rules.lastUpdated > 0">
-            · updated {{ formatRelative(rules.lastUpdated) }}
+            · {{ t('rules.updated', { time: formatRelative(rules.lastUpdated) }) }}
           </template>
         </p>
       </div>
@@ -162,11 +164,13 @@ onMounted(() => {
           v-model="search"
           class="toolbar__search"
           :prefix-icon="Search"
-          placeholder="Filter by type, payload or target…"
+          :placeholder="t('rules.searchPlaceholder')"
           clearable
         />
-        <el-checkbox v-model="onlyDisabled">Only disabled</el-checkbox>
-        <el-button :icon="Refresh" :loading="rules.loading" @click="refresh">Refresh</el-button>
+        <el-checkbox v-model="onlyDisabled">{{ t('rules.onlyDisabled') }}</el-checkbox>
+        <el-button :icon="Refresh" :loading="rules.loading" @click="refresh">
+          {{ t('action.refresh') }}
+        </el-button>
       </div>
     </div>
 
@@ -180,33 +184,39 @@ onMounted(() => {
 
     <EmptyState
       v-if="!rules.loading && rules.totalCount === 0"
-      title="No rules reported"
-      description="The core returned an empty rule list. Load a profile that has rules, or check the backend connection."
+      :title="t('rules.emptyTitle')"
+      :description="t('rules.emptyDescription')"
     >
       <template #actions>
-        <el-button type="primary" :icon="Refresh" @click="refresh">Reload rules</el-button>
+        <el-button type="primary" :icon="Refresh" @click="refresh">
+          {{ t('rules.reloadRules') }}
+        </el-button>
       </template>
     </EmptyState>
 
     <template v-else>
       <div class="list-toolbar">
         <span class="text-faint">
-          {{ rows.length }} of {{ rules.totalCount }} rule(s)
-          <template v-if="truncated > 0"> · rendering the first {{ RENDER_LIMIT }}</template>
-          <template v-if="isFiltered"> · filtered</template>
+          {{
+            t('rules.showingOf', {
+              shown: rows.length,
+              total: rules.totalCount,
+              count: rules.totalCount,
+            })
+          }}
+          <template v-if="truncated > 0"> · {{ t('rules.renderingFirst', { limit: RENDER_LIMIT }) }}</template>
+          <template v-if="isFiltered"> · {{ t('rules.filtered') }}</template>
         </span>
         <span class="grow" />
-        <span class="text-faint">
-          toggling a rule is process-local: the core keeps it until the next reload
-        </span>
+        <span class="text-faint">{{ t('rules.toggleNote') }}</span>
       </div>
 
       <section class="app-panel rule-list">
         <p v-if="rules.loading && rules.totalCount === 0" class="rule-note text-muted">
-          Loading rules…
+          {{ t('rules.loading') }}
         </p>
         <p v-else-if="visibleRows.length === 0" class="rule-note text-faint">
-          No rule matches the current filter.
+          {{ t('rules.noMatch') }}
         </p>
 
         <div
@@ -244,7 +254,7 @@ onMounted(() => {
           <span
             v-if="typeof row.rule.size === 'number' && row.rule.size >= 0"
             class="rule-row__size text-faint"
-            :title="`${row.rule.size} entries in this rule set`"
+            :title="t('rules.ruleSetEntries', { count: row.rule.size })"
           >
             {{ row.rule.size }}
           </span>
@@ -252,7 +262,7 @@ onMounted(() => {
             class="rule-row__switch"
             :model-value="row.rule.disabled === true"
             :loading="ruleSaving(row)"
-            :aria-label="`Enable or disable rule ${row.index}`"
+            :aria-label="t('rules.toggleRule', { index: row.index })"
             @change="toggleRule(row, $event === true)"
           />
         </div>
@@ -260,7 +270,7 @@ onMounted(() => {
 
       <section class="provider-section">
         <div class="provider-head">
-          <h3 class="app-section-title">Rule providers</h3>
+          <h3 class="app-section-title">{{ t('rules.providersTitle') }}</h3>
           <span class="grow" />
           <el-button
             v-if="providers.length > 0"
@@ -269,13 +279,12 @@ onMounted(() => {
             :loading="updatingAll"
             @click="updateAll"
           >
-            Update all
+            {{ t('action.updateAll') }}
           </el-button>
         </div>
 
         <p v-if="!rules.providersAvailable" class="text-faint provider-note">
-          This core does not expose <code>GET /providers/rules</code>, so rule providers cannot be
-          listed or refreshed here. The rule list above is unaffected.
+          {{ t('rules.providersUnsupportedPrefix') }}<code>GET /providers/rules</code>{{ t('rules.providersUnsupportedSuffix') }}
         </p>
 
         <template v-else>
@@ -288,7 +297,7 @@ onMounted(() => {
           />
 
           <p v-if="providers.length === 0" class="text-faint provider-note">
-            No rule providers are configured — every rule is inline.
+            {{ t('rules.noProviders') }}
           </p>
 
           <div v-else class="provider-grid">
@@ -301,19 +310,19 @@ onMounted(() => {
                   :loading="providerSaving(provider.name)"
                   @click="updateProvider(provider.name)"
                 >
-                  Update
+                  {{ t('action.update') }}
                 </el-button>
               </div>
               <p class="text-faint provider-card__meta">
                 {{ provider.vehicleType || provider.type }} ·
-                {{ provider.behavior || 'unknown behaviour' }} ·
-                {{ provider.ruleCount }} rules
+                {{ provider.behavior || t('rules.providerUnknownBehavior') }} ·
+                {{ t('count.rules', { count: provider.ruleCount }) }}
                 <template v-if="provider.updatedAt">
-                  · updated {{ formatRelative(provider.updatedAt) }}
+                  · {{ t('rules.updated', { time: formatRelative(provider.updatedAt) }) }}
                 </template>
               </p>
               <p v-if="provider.format" class="text-faint provider-card__meta mono">
-                format {{ provider.format }}
+                {{ t('rules.providerFormat', { format: provider.format }) }}
               </p>
             </div>
           </div>

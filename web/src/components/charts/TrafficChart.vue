@@ -12,6 +12,7 @@ import type {
 import { use, type ComposeOption } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
 
+import { useI18n, type MessageKey } from '@/i18n'
 import { useSettingsStore } from '@/stores/settings'
 import { formatRate, formatRateCompact } from '@/utils/format'
 
@@ -43,7 +44,17 @@ const props = withDefaults(
 const DOWN_COLOR = '#3b82f6'
 const UP_COLOR = '#f59e0b'
 
+/**
+ * Legend and series labels are catalogue keys, translated at render time, so
+ * both the legend and the tooltip follow the active locale.
+ */
+const SERIES_LABELS: Record<'down' | 'up', MessageKey> = {
+  down: 'dashboard.download',
+  up: 'dashboard.upload',
+}
+
 const settings = useSettingsStore()
+const { t } = useI18n()
 const isDark = computed<boolean>(() => settings.theme === 'dark')
 
 /** Only use the time axis when the sample times actually line up. */
@@ -97,7 +108,7 @@ const option = computed<TrafficChartOption>(() => ({
     itemWidth: 10,
     itemHeight: 10,
     textStyle: { color: legendColor.value, fontSize: 12 },
-    data: ['Download', 'Upload'],
+    data: [t(SERIES_LABELS.down), t(SERIES_LABELS.up)],
   },
   tooltip: {
     trigger: 'axis',
@@ -145,7 +156,7 @@ const option = computed<TrafficChartOption>(() => ({
   },
   series: [
     {
-      name: 'Download',
+      name: t(SERIES_LABELS.down),
       type: 'line',
       smooth: true,
       showSymbol: false,
@@ -156,7 +167,7 @@ const option = computed<TrafficChartOption>(() => ({
       areaStyle: areaGradient(DOWN_COLOR),
     },
     {
-      name: 'Upload',
+      name: t(SERIES_LABELS.up),
       type: 'line',
       smooth: true,
       showSymbol: false,

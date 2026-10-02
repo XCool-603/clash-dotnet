@@ -6,15 +6,27 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import ErrorState from '@/components/ErrorState.vue'
 import StatusPill from '@/components/StatusPill.vue'
 import YamlEditor from '@/components/YamlEditor.vue'
+import { useI18n, type Locale, type MessageKey } from '@/i18n'
 import { useConfigStore } from '@/stores/config'
 import { useSettingsStore } from '@/stores/settings'
+import type { ClashMode } from '@/types'
 import { messageOf } from '@/utils/async'
 import { formatRelative } from '@/utils/format'
 
 type DraftParse = { ok: true; value: Record<string, unknown> } | { ok: false; message: string }
 
+/** The core reports the routing mode as a token; the shell owns its wording. */
+const MODE_LABELS: Record<ClashMode, MessageKey> = {
+  rule: 'mode.rule',
+  global: 'mode.global',
+  direct: 'mode.direct',
+}
+
 const settings = useSettingsStore()
 const config = useConfigStore()
+const { t, locale, locales, setLocale } = useI18n()
+
+const modeLabel = computed<string>(() => t(MODE_LABELS[config.mode]))
 
 /** The editable general object, and the file the "reload from disk" action reads. */
 const draft = ref('')
@@ -40,13 +52,24 @@ function onSecretChange(value: unknown): void {
 
 function resetConnection(): void {
   settings.resetConnection()
-  ElMessage.success('Connection settings reset to their defaults')
+  ElMessage.success(t('settings.connection.resetDone'))
 }
 
 /* ---- appearance --------------------------------------------------- */
 
 function onThemeChange(value: unknown): void {
   settings.setTheme(value === 'light' ? 'light' : 'dark')
+}
+
+/**
+ * The language control drives the i18n module (immediate switch) *and* the
+ * store (persistence), exactly as the shell's switcher does.
+ */
+function onLocaleChange(value: unknown): void {
+  if (value !== 'en' && value !== 'zh-CN') return
+  const next: Locale = value
+  setLocale(next)
+  settings.setLocale(next)
 }
 
 /* ---- configuration ------------------------------------------------ */
@@ -110,13 +133,13 @@ function countKeys(patch: Record<string, unknown>): number {
 
 const parsed = computed<DraftParse>(() => {
   const text = draft.value.trim()
-  if (text.length === 0) return { ok: false, message: 'The editor is empty.' }
+  if (text.length === 0) return { ok: false, message: t('settings.config.errorEmpty') }
   try {
     const value: unknown = JSON.parse(text)
-    if (!isPlainObject(value)) return { ok: false, message: 'The document must be a JSON object.' }
+    if (!isPlainObject(value)) return { ok: false, message: t('settings.config.errorNotObject') }
     return { ok: true, value }
   } catch (error) {
-    return { ok: false, message: `Invalid JSON — ${messageOf(error)}` }
+    return { ok: false, message: t('settings.config.errorInvalid', { message: messageOf(error) }) }
   }
 })
 
@@ -142,7 +165,7 @@ async function applyConfig(): Promise<void> {
 
   const patch = changes.value
   if (Object.keys(patch).length === 0) {
-    ElMessage.info('Nothing to apply — the document matches the running configuration.')
+    ElMessage.info(t('settings.config.nothingToApply'))
     return
   }
 
@@ -151,7 +174,7 @@ async function applyConfig(): Promise<void> {
   busy.value = ''
 
   if (applied.ok) {
-    ElMessage.success('Configuration applied — hot reload, the core was not restarted')
+    ElMessage.success(t('settings.config.applied'))
     seedDraft()
   } else {
     ElMessage.error(applied.error.message)
@@ -161,7 +184,7 @@ async function applyConfig(): Promise<void> {
 async function reloadFromFile(): Promise<void> {
   const path = reloadPath.value.trim()
   if (path.length === 0) {
-    ElMessage.warning('A configuration path is required')
+    ElMessage.warning(t('settings.config.pathRequired'))
     return
   }
 
@@ -170,7 +193,7 @@ async function reloadFromFile(): Promise<void> {
   busy.value = ''
 
   if (result.ok) {
-    ElMessage.success('Configuration reloaded from disk')
+    ElMessage.success(t('settings.config.reloaded'))
     seedDraft()
   } else {
     ElMessage.error(result.error.message)
@@ -184,8 +207,8 @@ async function flushFakeIp(): Promise<void> {
   const result = await config.flushFakeIp()
   busy.value = ''
 
-  if (result.ok) ElMessage.success('Fake-IP cache flushed')
-  else if (result.error.isMissing) ElMessage.warning('This core does not expose POST /cache/fakeip/flush')
+  if (result.ok) ElMessage.success(t('settings.maintenance.fakeIpFlushed'))
+  else if (result.error.isMissing) ElMessage.warning(t('settings.maintenance.fakeIpUnsupported'))
   else ElMessage.error(result.error.message)
 }
 
@@ -194,17 +217,21 @@ async function flushDns(): Promise<void> {
   const result = await config.flushDns()
   busy.value = ''
 
-  if (result.ok) ElMessage.success('DNS cache flushed')
-  else if (result.error.isMissing) ElMessage.warning('This core does not expose POST /cache/dns/flush')
+  if (result.ok) ElMessage.success(t('settings.maintenance.dnsFlushed'))
+  else if (result.error.isMissing) ElMessage.warning(t('settings.maintenance.dnsUnsupported'))
   else ElMessage.error(result.error.message)
 }
 
 async function restartCore(): Promise<void> {
   try {
     await ElMessageBox.confirm(
-      'Restart the Clash core process? Active connections will be dropped.',
-      'Restart core',
-      { type: 'warning', confirmButtonText: 'Restart', cancelButtonText: 'Cancel' },
+      t('settings.maintenance.restartConfirm'),
+      t('settings.maintenance.restartCore'),
+      {
+        type: 'warning',
+        confirmButtonText: t('settings.maintenance.restart'),
+        cancelButtonText: t('action.cancel'),
+      },
     )
   } catch {
     return
@@ -214,8 +241,8 @@ async function restartCore(): Promise<void> {
   const result = await config.restartCore()
   busy.value = ''
 
-  if (result.ok) ElMessage.success('Restart requested')
-  else if (result.error.isMissing) ElMessage.warning('This core does not expose POST /restart (embed mode omits it)')
+  if (result.ok) ElMessage.success(t('settings.maintenance.restartRequested'))
+  else if (result.error.isMissing) ElMessage.warning(t('settings.maintenance.restartUnsupported'))
   else ElMessage.error(result.error.message)
 }
 
@@ -229,38 +256,39 @@ onMounted(() => {
   <div class="app-page">
     <div class="app-page__head">
       <div>
-        <h2 class="app-page__title">Settings</h2>
+        <h2 class="app-page__title">{{ t('nav.settings') }}</h2>
         <p class="app-page__subtitle">
-          Connection, appearance and the running configuration · mode {{ config.mode }} ·
-          core {{ config.versionLabel }}
+          {{ t('settings.subtitle', { mode: modeLabel, core: config.versionLabel }) }}
         </p>
       </div>
       <StatusPill
         :online="config.online"
-        :label="config.unauthorized ? 'Secret required' : undefined"
+        :label="config.unauthorized ? t('status.secretRequired') : undefined"
       />
     </div>
 
     <!-- connection -->
     <section class="app-panel app-panel--pad settings-section">
       <header class="panel-head">
-        <h3 class="app-section-title">Connection</h3>
+        <h3 class="app-section-title">{{ t('settings.connection.title') }}</h3>
         <span class="text-faint panel-head__note">
-          <template v-if="config.lastSync > 0">synced {{ formatRelative(config.lastSync) }}</template>
-          <template v-else>not synced yet</template>
+          <template v-if="config.lastSync > 0">
+            {{ t('settings.connection.syncedAt', { time: formatRelative(config.lastSync) }) }}
+          </template>
+          <template v-else>{{ t('settings.connection.neverSynced') }}</template>
         </span>
       </header>
 
       <el-form label-position="top">
         <div class="form-grid">
-          <el-form-item label="Same origin">
+          <el-form-item :label="t('settings.connection.sameOrigin')">
             <div class="field-row">
               <el-switch :model-value="settings.sameOrigin" @change="onSameOriginChange" />
-              <span class="text-faint field-note">Talk to the origin that served this page.</span>
+              <span class="text-faint field-note">{{ t('settings.connection.sameOriginHint') }}</span>
             </div>
           </el-form-item>
 
-          <el-form-item label="API base URL">
+          <el-form-item :label="t('settings.connection.apiBaseUrl')">
             <el-input
               :model-value="settings.apiBaseUrl"
               :disabled="settings.sameOrigin"
@@ -269,17 +297,17 @@ onMounted(() => {
             />
           </el-form-item>
 
-          <el-form-item label="Secret">
+          <el-form-item :label="t('settings.connection.secret')">
             <el-input
               :model-value="settings.secret"
               type="password"
               show-password
-              placeholder="external-controller secret"
+              :placeholder="t('settings.connection.secretPlaceholder')"
               @change="onSecretChange"
             />
           </el-form-item>
 
-          <el-form-item label="Effective target">
+          <el-form-item :label="t('settings.connection.target')">
             <span class="target mono ellipsis" :title="settings.targetLabel">
               {{ settings.targetLabel }}
             </span>
@@ -288,40 +316,59 @@ onMounted(() => {
       </el-form>
 
       <div class="action-row">
-        <el-button :icon="Refresh" @click="resetConnection">Reset connection</el-button>
+        <el-button :icon="Refresh" @click="resetConnection">
+          {{ t('settings.connection.reset') }}
+        </el-button>
         <span class="text-faint field-note">
-          The secret is sent as <code>Authorization: Bearer …</code> on REST and as
-          <code>?token=</code> on WebSockets. Both values live in this browser's local storage.
+          {{ t('settings.connection.secretNotePrefix') }}
+          <code>Authorization: Bearer …</code>
+          {{ t('settings.connection.secretNoteMiddle') }}
+          <code>?token=</code>
+          {{ t('settings.connection.secretNoteSuffix') }}
         </span>
       </div>
     </section>
 
     <!-- appearance -->
     <section class="app-panel app-panel--pad settings-section mt-16">
-      <h3 class="app-section-title">Appearance</h3>
+      <h3 class="app-section-title">{{ t('settings.appearance.title') }}</h3>
       <div class="action-row">
         <el-radio-group :model-value="settings.theme" @change="onThemeChange">
           <el-radio-button value="dark">
             <el-icon><Moon /></el-icon>
-            Dark
+            {{ t('settings.appearance.dark') }}
           </el-radio-button>
           <el-radio-button value="light">
             <el-icon><Sunny /></el-icon>
-            Light
+            {{ t('settings.appearance.light') }}
           </el-radio-button>
         </el-radio-group>
-        <el-button text @click="settings.toggleTheme()">Toggle theme</el-button>
+        <el-button text @click="settings.toggleTheme()">
+          {{ t('settings.appearance.toggleTheme') }}
+        </el-button>
       </div>
-      <p class="text-faint section-note">The theme is stored in this browser only.</p>
+      <p class="text-faint section-note">{{ t('settings.appearance.themeNote') }}</p>
+
+      <!-- Language: each entry is written in its own language, which is how a
+           reader who cannot read the current one finds theirs. -->
+      <div class="action-row">
+        <span class="text-faint field-note">{{ t('topbar.language') }}</span>
+        <el-radio-group :model-value="locale" @change="onLocaleChange">
+          <el-radio-button v-for="entry in locales" :key="entry.value" :value="entry.value">
+            {{ entry.label }}
+          </el-radio-button>
+        </el-radio-group>
+        <span class="text-faint field-note">{{ t('settings.appearance.languageNote') }}</span>
+      </div>
     </section>
 
     <!-- configuration -->
     <section class="app-panel app-panel--pad settings-section mt-16">
       <header class="panel-head">
-        <h3 class="app-section-title">Configuration</h3>
+        <h3 class="app-section-title">{{ t('settings.config.title') }}</h3>
         <span class="text-faint panel-head__note">
           <code>GET /configs</code>
-          <template v-if="config.configAvailable"> · loaded</template>
+          <template v-if="config.configAvailable"> · {{ t('settings.config.loaded') }}</template>
         </span>
       </header>
 
@@ -334,14 +381,16 @@ onMounted(() => {
       />
 
       <p class="text-faint section-note">
-        The editor holds the general configuration object as JSON. Applying sends only the keys you
-        changed to <code>PATCH /configs</code>, which the core merges into the running document and
-        applies in place: the reload is hot, so the process keeps running and active connections are
-        not dropped.
+        {{ t('settings.config.descriptionPrefix') }}
+        <code>PATCH /configs</code>{{ t('settings.config.descriptionSuffix') }}
       </p>
 
       <div class="editor-host">
-        <YamlEditor v-model="draft" :min-height="380" placeholder="Loading configuration…" />
+        <YamlEditor
+          v-model="draft"
+          :min-height="380"
+          :placeholder="t('settings.config.loadingPlaceholder')"
+        />
       </div>
 
       <div class="action-row">
@@ -352,60 +401,69 @@ onMounted(() => {
           :disabled="parseError.length > 0"
           @click="applyConfig"
         >
-          Apply changes
+          {{ t('settings.config.apply') }}
         </el-button>
         <el-button :icon="Refresh" :loading="config.loading" @click="loadConfig">
-          Reload from core
+          {{ t('settings.config.reloadFromCore') }}
         </el-button>
         <span class="grow" />
         <span v-if="parseError" class="text-danger field-note">{{ parseError }}</span>
-        <span v-else-if="changeCount === 0" class="text-faint field-note">no changes</span>
-        <span v-else class="text-faint field-note">{{ changeCount }} key(s) changed</span>
+        <span v-else-if="changeCount === 0" class="text-faint field-note">
+          {{ t('settings.config.noChanges') }}
+        </span>
+        <span v-else class="text-faint field-note">
+          {{ t('settings.config.changedKeys', { count: changeCount }) }}
+        </span>
       </div>
 
-      <h4 class="app-section-title mt-16 sub-title">Reload from a file</h4>
+      <h4 class="app-section-title mt-16 sub-title">{{ t('settings.config.reloadFromFile') }}</h4>
       <div class="reload-row">
         <el-input v-model="reloadPath" class="grow" placeholder="config.yaml" />
         <el-button :icon="Refresh" :loading="busy === 'reload'" @click="reloadFromFile">
-          Reload
+          {{ t('action.reload') }}
         </el-button>
       </div>
       <p class="text-faint section-note">
-        <code>PUT /configs?force=true</code> re-reads the whole document from disk. This is a hot
-        reload too: listeners, rules and providers are rebuilt in place without restarting the core.
+        <code>PUT /configs?force=true</code>
+        {{ t('settings.config.reloadFileNote') }}
       </p>
     </section>
 
     <!-- maintenance -->
     <section class="app-panel app-panel--pad settings-section mt-16">
-      <h3 class="app-section-title">Maintenance</h3>
+      <h3 class="app-section-title">{{ t('settings.maintenance.title') }}</h3>
       <p class="text-faint section-note">
-        Cache flushes are safe to repeat; restarting the core drops every active connection, so it
-        asks first. An action this core does not implement answers <code>404</code>, which is
-        reported as "not supported" rather than as a failure.
+        {{ t('settings.maintenance.notePrefix') }}
+        <code>404</code>{{ t('settings.maintenance.noteSuffix') }}
       </p>
 
       <div class="action-row">
         <el-button :icon="Delete" :loading="busy === 'fakeip'" @click="flushFakeIp">
-          Flush fake-IP cache
+          {{ t('settings.maintenance.flushFakeIp') }}
         </el-button>
         <el-button :icon="Refresh" :loading="busy === 'dns'" @click="flushDns">
-          Flush DNS cache
+          {{ t('settings.maintenance.flushDns') }}
         </el-button>
         <el-button :icon="SwitchButton" :loading="busy === 'restart'" @click="restartCore">
-          Restart core
+          {{ t('settings.maintenance.restartCore') }}
         </el-button>
       </div>
 
-      <h4 class="app-section-title mt-16 sub-title">Core</h4>
+      <h4 class="app-section-title mt-16 sub-title">{{ t('settings.maintenance.core') }}</h4>
       <div class="core-row">
         <el-tag class="mono" size="small" type="info" effect="plain">{{ config.versionLabel }}</el-tag>
         <el-tag size="small" :type="config.hasMeta ? 'success' : 'warning'" effect="plain">
           {{ config.hasMeta ? 'mihomo' : 'core' }}
         </el-tag>
         <span class="text-faint field-note">
-          mode {{ config.mode }} · log level {{ config.logLevel }} ·
-          DNS {{ config.dnsEnabled ? 'on' : 'off' }} · TUN {{ config.tunEnabled ? 'on' : 'off' }}
+          {{
+            t('settings.maintenance.coreNote', {
+              mode: modeLabel,
+              logLevel: config.logLevel,
+              dns: t(config.dnsEnabled ? 'state.on' : 'state.off'),
+              tun: t(config.tunEnabled ? 'state.on' : 'state.off'),
+            })
+          }}
         </span>
       </div>
     </section>

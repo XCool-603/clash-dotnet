@@ -19,6 +19,7 @@ import ModeSwitcher from '@/components/ModeSwitcher.vue'
 import NodeIcon from '@/components/NodeIcon.vue'
 import StatCard from '@/components/StatCard.vue'
 import StatusPill from '@/components/StatusPill.vue'
+import { useI18n } from '@/i18n'
 import { useConfigStore } from '@/stores/config'
 import { useConnectionsStore } from '@/stores/connections'
 import { useProxiesStore } from '@/stores/proxies'
@@ -31,12 +32,15 @@ const traffic = useTrafficStore()
 const connections = useConnectionsStore()
 const proxies = useProxiesStore()
 const config = useConfigStore()
+const { t } = useI18n()
 
 const busy = ref<string>('')
 
 const memoryHint = computed<string>(() => {
-  if (traffic.memoryLimit > 0) return `limit ${formatBytes(traffic.memoryLimit)}`
-  return `${traffic.sampleCount} samples`
+  if (traffic.memoryLimit > 0) {
+    return t('dashboard.memoryLimit', { size: formatBytes(traffic.memoryLimit) })
+  }
+  return t('dashboard.sampleCount', { count: traffic.sampleCount })
 })
 
 const memoryValue = computed<string>(() =>
@@ -97,9 +101,9 @@ async function flushFakeIp(): Promise<void> {
   const result = await config.flushFakeIp()
   busy.value = ''
   if (result.ok) {
-    ElMessage.success('Fake-IP cache flushed')
+    ElMessage.success(t('dashboard.fakeIpFlushed'))
   } else if (result.error.isMissing) {
-    ElMessage.warning('This core does not expose POST /cache/fakeip/flush')
+    ElMessage.warning(t('dashboard.fakeIpUnsupported'))
   } else {
     ElMessage.error(result.error.message)
   }
@@ -108,9 +112,13 @@ async function flushFakeIp(): Promise<void> {
 async function restartCore(): Promise<void> {
   try {
     await ElMessageBox.confirm(
-      'Restart the Clash core process? Active connections will be dropped.',
-      'Restart core',
-      { type: 'warning', confirmButtonText: 'Restart', cancelButtonText: 'Cancel' },
+      t('dashboard.restartConfirm'),
+      t('dashboard.restartCore'),
+      {
+        type: 'warning',
+        confirmButtonText: t('dashboard.restart'),
+        cancelButtonText: t('action.cancel'),
+      },
     )
   } catch {
     return
@@ -120,9 +128,9 @@ async function restartCore(): Promise<void> {
   const result = await config.restartCore()
   busy.value = ''
   if (result.ok) {
-    ElMessage.success('Restart requested')
+    ElMessage.success(t('dashboard.restartRequested'))
   } else if (result.error.isMissing) {
-    ElMessage.warning('This core does not expose POST /restart (embed mode omits it)')
+    ElMessage.warning(t('dashboard.restartUnsupported'))
   } else {
     ElMessage.error(result.error.message)
   }
@@ -148,71 +156,75 @@ onMounted(() => {
   <div class="app-page">
     <div class="app-page__head">
       <div>
-        <h2 class="app-page__title">Overview</h2>
-        <p class="app-page__subtitle">
-          Live throughput, memory and the current routing mode.
-        </p>
+        <h2 class="app-page__title">{{ t('nav.dashboard') }}</h2>
+        <p class="app-page__subtitle">{{ t('dashboard.subtitle') }}</p>
       </div>
       <StatusPill
         :online="config.online"
-        :label="config.unauthorized ? 'Secret required' : undefined"
+        :label="config.unauthorized ? t('status.secretRequired') : undefined"
       />
     </div>
 
     <section class="stat-grid">
       <StatCard
-        label="Upload"
+        :label="t('dashboard.upload')"
         tone="up"
         :value="formatRate(traffic.currentUp)"
-        :hint="`peak ${formatRate(traffic.peakUp)}`"
+        :hint="t('dashboard.peak', { rate: formatRate(traffic.peakUp) })"
       >
         <template #icon><el-icon><Upload /></el-icon></template>
       </StatCard>
 
       <StatCard
-        label="Download"
+        :label="t('dashboard.download')"
         tone="down"
         :value="formatRate(traffic.currentDown)"
-        :hint="`peak ${formatRate(traffic.peakDown)}`"
+        :hint="t('dashboard.peak', { rate: formatRate(traffic.peakDown) })"
       >
         <template #icon><el-icon><Download /></el-icon></template>
       </StatCard>
 
       <StatCard
-        label="Upload total"
+        :label="t('dashboard.uploadTotal')"
         :value="formatBytes(connections.uploadTotal)"
-        hint="since the core started"
+        :hint="t('dashboard.sinceCoreStart')"
       >
         <template #icon><el-icon><Upload /></el-icon></template>
       </StatCard>
 
       <StatCard
-        label="Download total"
+        :label="t('dashboard.downloadTotal')"
         :value="formatBytes(connections.downloadTotal)"
-        hint="since the core started"
+        :hint="t('dashboard.sinceCoreStart')"
       >
         <template #icon><el-icon><Download /></el-icon></template>
       </StatCard>
 
       <StatCard
-        label="Active connections"
+        :label="t('dashboard.activeConnections')"
         tone="accent"
         :value="String(connections.activeCount)"
-        :hint="`${connections.closedCount} closed this session`"
+        :hint="t('dashboard.closedThisSession', { count: connections.closedCount })"
       >
         <template #icon><el-icon><Link /></el-icon></template>
       </StatCard>
 
-      <StatCard label="Memory in use" tone="memory" :value="memoryValue" :hint="memoryHint">
+      <StatCard
+        :label="t('dashboard.memoryInUse')"
+        tone="memory"
+        :value="memoryValue"
+        :hint="memoryHint"
+      >
         <template #icon><el-icon><Cpu /></el-icon></template>
       </StatCard>
     </section>
 
     <section class="app-panel app-panel--pad chart-panel">
       <header class="panel-head">
-        <h3 class="app-section-title">Traffic</h3>
+        <h3 class="app-section-title">{{ t('dashboard.traffic') }}</h3>
         <span class="text-faint panel-head__note">
-          {{ traffic.sampleCount }} samples · 1 Hz · 2.5 min window
+          {{ t('dashboard.sampleCount', { count: traffic.sampleCount }) }} ·
+          {{ t('dashboard.trafficWindow') }}
         </span>
       </header>
       <TrafficChart
@@ -227,7 +239,7 @@ onMounted(() => {
     <section class="dash-cols">
       <div class="app-panel app-panel--pad">
         <header class="panel-head">
-          <h3 class="app-section-title">Memory</h3>
+          <h3 class="app-section-title">{{ t('dashboard.memory') }}</h3>
           <span class="text-faint panel-head__note">{{ formatBytes(traffic.memoryInuse) }}</span>
         </header>
         <MemoryChart
@@ -241,7 +253,7 @@ onMounted(() => {
 
       <div class="app-panel app-panel--pad side-panel">
         <header class="panel-head">
-          <h3 class="app-section-title">Mode</h3>
+          <h3 class="app-section-title">{{ t('mode.label') }}</h3>
           <span class="text-faint panel-head__note">{{ config.versionLabel }}</span>
         </header>
         <ModeSwitcher
@@ -250,7 +262,7 @@ onMounted(() => {
           @change="onModeChange"
         />
 
-        <h3 class="app-section-title mt-16">Quick proxy</h3>
+        <h3 class="app-section-title mt-16">{{ t('dashboard.quickProxy') }}</h3>
         <template v-if="quickGroup && quickMembers.length > 0">
           <div class="quick-row">
             <NodeIcon
@@ -276,25 +288,25 @@ onMounted(() => {
             <el-button
               :icon="Refresh"
               :loading="busy === 'test'"
-              aria-label="Test this group"
-              :title="`Test this group against ${quickProbeUrl}`"
+              :aria-label="t('dashboard.testGroup')"
+              :title="t('dashboard.testGroupTitle', { url: quickProbeUrl })"
               @click="testSelected"
             />
           </div>
           <p class="text-faint quick-note">
-            Group <strong>{{ quickGroup.name }}</strong>
-            ({{ quickGroup.type }})<template v-if="!quickSelectable">
-              — read-only, the core picks the member automatically.</template>
+            {{ t('dashboard.groupLabel') }}
+            <strong>{{ quickGroup.name }}</strong>
+            ({{ quickGroup.type }})<template v-if="!quickSelectable"> {{ t('dashboard.groupReadOnly') }}</template>
           </p>
         </template>
         <EmptyState
           v-else
-          title="No proxy groups"
-          description="The core has not reported any proxy groups yet."
+          :title="t('dashboard.emptyTitle')"
+          :description="t('dashboard.emptyDescription')"
         >
           <template #actions>
             <el-button :icon="Refresh" :loading="busy === 'proxies'" @click="refreshProxies">
-              Load proxies
+              {{ t('dashboard.loadProxies') }}
             </el-button>
           </template>
         </EmptyState>
@@ -307,27 +319,26 @@ onMounted(() => {
           @retry="refreshProxies"
         />
 
-        <h3 class="app-section-title mt-16">Actions</h3>
+        <h3 class="app-section-title mt-16">{{ t('dashboard.actions') }}</h3>
         <div class="action-row">
           <el-button
             :icon="Delete"
             :loading="busy === 'fakeip'"
             @click="flushFakeIp"
           >
-            Flush fake-IP
+            {{ t('dashboard.flushFakeIp') }}
           </el-button>
           <el-button
             :icon="SwitchButton"
             :loading="busy === 'restart'"
             @click="restartCore"
           >
-            Restart core
+            {{ t('dashboard.restartCore') }}
           </el-button>
         </div>
         <p class="text-faint quick-note">
-          Both actions are core-dependent: a stock build may not mount
-          <code>POST /restart</code>, in which case the dashboard says so instead of failing
-          silently.
+          {{ t('dashboard.actionsNoteBefore') }}
+          <code>POST /restart</code>{{ t('dashboard.actionsNoteAfter') }}
         </p>
       </div>
     </section>

@@ -7,6 +7,7 @@ import DelayBadge from '@/components/DelayBadge.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import ErrorState from '@/components/ErrorState.vue'
 import NodeIcon from '@/components/NodeIcon.vue'
+import { useI18n, type MessageKey } from '@/i18n'
 import { useProxiesStore } from '@/stores/proxies'
 import { useSettingsStore } from '@/stores/settings'
 import type { ProxyProvider } from '@/types'
@@ -16,8 +17,19 @@ import { formatBytes, formatExpiry, formatRelative } from '@/utils/format'
 
 const proxies = useProxiesStore()
 const settings = useSettingsStore()
+const { t } = useI18n()
 
 type SortMode = 'natural' | 'latency'
+
+interface SortOption {
+  value: SortMode
+  labelKey: MessageKey
+}
+
+const SORT_OPTIONS: SortOption[] = [
+  { value: 'natural', labelKey: 'proxies.sort.groupOrder' },
+  { value: 'latency', labelKey: 'proxies.sort.fastest' },
+]
 
 interface NodeRow {
   /** Position inside the group's own `all` list — the stable tiebreaker. */
@@ -166,7 +178,7 @@ async function updateProvider(name: string): Promise<void> {
   busyProvider.value = name
   const result = await proxies.updateProvider(name)
   busyProvider.value = ''
-  if (result.ok) ElMessage.success(`Updated provider ${name}`)
+  if (result.ok) ElMessage.success(t('proxies.providerUpdatedToast', { name }))
   else ElMessage.error(result.error.message)
 }
 
@@ -189,9 +201,10 @@ onMounted(() => {
   <div class="app-page">
     <div class="app-page__head">
       <div>
-        <h2 class="app-page__title">Proxies</h2>
+        <h2 class="app-page__title">{{ t('nav.proxies') }}</h2>
         <p class="app-page__subtitle">
-          {{ proxies.groups.length }} groups · {{ totalNodes }} nodes ·
+          {{ t('proxies.groupCount', { count: proxies.groups.length }) }} ·
+          {{ t('count.nodes', { count: totalNodes }) }} ·
           {{ settings.targetLabel }}
         </p>
       </div>
@@ -201,16 +214,22 @@ onMounted(() => {
           v-model="search"
           class="toolbar__search"
           :prefix-icon="Search"
-          placeholder="Filter nodes…"
+          :placeholder="t('proxies.filterPlaceholder')"
           clearable
         />
         <el-select v-model="sortMode" class="toolbar__sort" size="default">
-          <el-option label="Group order" value="natural" />
-          <el-option label="Fastest first" value="latency" />
+          <el-option
+            v-for="option in SORT_OPTIONS"
+            :key="option.value"
+            :label="t(option.labelKey)"
+            :value="option.value"
+          />
         </el-select>
-        <el-button :icon="Refresh" :loading="proxies.loading" @click="refresh">Refresh</el-button>
+        <el-button :icon="Refresh" :loading="proxies.loading" @click="refresh">
+          {{ t('action.refresh') }}
+        </el-button>
         <el-button type="primary" :icon="Loading" :loading="testingAll" @click="testAll">
-          Test all groups
+          {{ t('proxies.testAllGroups') }}
         </el-button>
       </div>
     </div>
@@ -219,11 +238,13 @@ onMounted(() => {
 
     <EmptyState
       v-if="!proxies.hasData && !proxies.loading"
-      title="No proxies reported"
-      description="The core returned an empty proxy map. Load a profile or check the backend connection."
+      :title="t('proxies.empty.title')"
+      :description="t('proxies.empty.description')"
     >
       <template #actions>
-        <el-button type="primary" :icon="Refresh" @click="refresh">Reload proxies</el-button>
+        <el-button type="primary" :icon="Refresh" @click="refresh">
+          {{ t('proxies.reload') }}
+        </el-button>
       </template>
     </EmptyState>
 
@@ -243,7 +264,7 @@ onMounted(() => {
           <template v-if="card.selectable">
             <span class="text-faint group-card__now ellipsis">{{ card.now || '—' }}</span>
           </template>
-          <span v-else class="text-faint group-card__now">auto</span>
+          <span v-else class="text-faint group-card__now">{{ t('proxies.auto') }}</span>
           <DelayBadge
             :delay="card.selectedDelay"
             :probe-url="card.probeUrl"
@@ -256,16 +277,16 @@ onMounted(() => {
             size="small"
             :icon="Loading"
             :loading="card.testing"
-            :aria-label="`Test every node in ${card.name}`"
+            :aria-label="t('proxies.testGroup', { name: card.name })"
             @click.stop="testGroup(card.name)"
           >
-            Test all
+            {{ t('proxies.testAll') }}
           </el-button>
         </header>
 
         <div v-show="!isCollapsed(card.name)" class="group-card__body">
           <p v-if="card.nodes.length === 0" class="text-faint group-card__empty">
-            No node matches “{{ search }}”.
+            {{ t('proxies.noMatch', { query: search }) }}
           </p>
 
           <div v-else class="node-grid">
@@ -282,8 +303,8 @@ onMounted(() => {
               :disabled="!card.selectable"
               :title="
                 card.selectable
-                  ? `${node.name} — click to select`
-                  : `${node.name} — ${card.type} groups pick their member automatically`
+                  ? t('proxies.node.selectTitle', { name: node.name })
+                  : t('proxies.node.staticTitle', { name: node.name, type: card.type })
               "
               @click="selectNode(card, node)"
             >
@@ -303,7 +324,7 @@ onMounted(() => {
       </section>
 
       <section v-if="providers.length > 0" class="provider-section">
-        <h3 class="app-section-title mb-8">Proxy providers</h3>
+        <h3 class="app-section-title mb-8">{{ t('proxies.providers') }}</h3>
         <ErrorState
           v-if="proxies.providerError"
           class="mb-12"
@@ -321,20 +342,20 @@ onMounted(() => {
                 :loading="busyProvider === provider.name"
                 @click="updateProvider(provider.name)"
               >
-                Update
+                {{ t('action.update') }}
               </el-button>
             </div>
             <p class="text-faint provider-card__meta">
               {{ provider.vehicleType || provider.type }} ·
-              {{ (provider.proxies ?? []).length }} nodes
+              {{ t('count.nodes', { count: (provider.proxies ?? []).length }) }}
               <template v-if="provider.updatedAt">
-                · updated {{ formatRelative(provider.updatedAt) }}
+                · {{ t('proxies.providerUpdated', { time: formatRelative(provider.updatedAt) }) }}
               </template>
             </p>
             <p v-if="provider.subscriptionInfo" class="provider-card__usage mono">
               {{ providerUsage(provider) }}
               <template v-if="provider.subscriptionInfo.Expire">
-                · expires {{ formatExpiry(provider.subscriptionInfo.Expire) }}
+                · {{ t('proxies.expires', { date: formatExpiry(provider.subscriptionInfo.Expire) }) }}
               </template>
             </p>
           </div>

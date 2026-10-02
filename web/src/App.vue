@@ -1,13 +1,25 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted } from 'vue'
 import { RouterView } from 'vue-router'
+import en from 'element-plus/es/locale/lang/en'
+import zhCn from 'element-plus/es/locale/lang/zh-cn'
+import type { Language } from 'element-plus/es/locale'
 
 import ErrorState from '@/components/ErrorState.vue'
 import SecretPrompt from '@/components/SecretPrompt.vue'
+import { useI18n } from '@/i18n'
 import DefaultLayout from '@/layouts/DefaultLayout.vue'
 import { useConfigStore } from '@/stores/config'
 
 const config = useConfigStore()
+const { locale } = useI18n()
+
+/**
+ * Element Plus ships its own strings (pagination, date pickers, the table empty
+ * text, dialog buttons). Without this the page would be Chinese and its widgets
+ * English, so the switcher drives both.
+ */
+const elementLocale = computed<Language>(() => (locale.value === 'zh-CN' ? zhCn : en))
 
 /**
  * A transport-level failure (the core is down, or on the wrong address) is
@@ -35,24 +47,26 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <DefaultLayout>
-    <div class="app-shell">
-      <div class="app-shell__banners">
-        <SecretPrompt :unauthorized="config.unauthorized" @retry="retry" />
-        <ErrorState
-          v-if="showTransportError"
-          class="mb-16"
-          inline
-          :error="config.error"
-          @retry="retry"
-        />
-      </div>
+  <el-config-provider :locale="elementLocale">
+    <DefaultLayout>
+      <div class="app-shell">
+        <div class="app-shell__banners">
+          <SecretPrompt :unauthorized="config.unauthorized" @retry="retry" />
+          <ErrorState
+            v-if="showTransportError"
+            class="mb-16"
+            inline
+            :error="config.error"
+            @retry="retry"
+          />
+        </div>
 
-      <RouterView v-slot="{ Component }">
-        <component :is="Component" />
-      </RouterView>
-    </div>
-  </DefaultLayout>
+        <RouterView v-slot="{ Component }">
+          <component :is="Component" />
+        </RouterView>
+      </div>
+    </DefaultLayout>
+  </el-config-provider>
 </template>
 
 <style scoped lang="scss">
