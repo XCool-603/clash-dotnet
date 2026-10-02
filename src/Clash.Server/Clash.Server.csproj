@@ -23,4 +23,22 @@
     <Content Update="wwwroot\**\*" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 
+  <!--
+    TUN mode loads wintun.dll at run time, so it has to sit next to the
+    executable. The licence requires the vendor's notice to travel with it, and
+    third_party/wintun/README.md records where the binary came from.
+  -->
+  <ItemGroup>
+    <None Include="..\..\third_party\wintun\amd64\wintun.dll"
+          Link="wintun.dll"
+          CopyToOutputDirectory="PreserveNewest"
+          CopyToPublishDirectory="PreserveNewest"
+          Visible="false" />
+    <None Include="..\..\third_party\wintun\LICENSE.txt"
+          Link="wintun-LICENSE.txt"
+          CopyToOutputDirectory="PreserveNewest"
+          CopyToPublishDirectory="PreserveNewest"
+          Visible="false" />
+  </ItemGroup>
+
 </Project>
