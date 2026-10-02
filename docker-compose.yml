@@ -1,0 +1,61 @@
+# One-click deployment for Clash for .NET (headless core + dashboard).
+#
+#   docker compose up -d
+#
+# Then open http://<host>:9090/ui, import a subscription, and point clients at
+# http://<host>:7890 (HTTP/SOCKS5) or <host>:1053 (DNS).
+#
+# Upgrading is `docker compose pull && docker compose up -d`, or
+# `scripts/docker-update.ps1` / `scripts/docker-update.sh`, which do that and
+# clean up the image they replaced.
+
+services:
+  clash:
+    # Prebuilt images are published by .github/workflows/docker.yml.
+    image: ghcr.io/xcool-603/clash-dotnet:latest
+
+    # To run from a local checkout instead of the published image, comment out
+    # `image:` above and uncomment this:
+    # build: .
+
+    container_name: clash
+    restart: unless-stopped
+
+    ports:
+      # Mixed HTTP + SOCKS5 inbound. UDP is published because SOCKS5 carries
+      # datagrams over an association on this port.
+      - "7890:7890/tcp"
+      - "7890:7890/udp"
+      # Control API and dashboard. This is what the browser talks to.
+      - "9090:9090/tcp"
+      # DNS listener.
+      - "1053:1053/tcp"
+      - "1053:1053/udp"
+
+    volumes:
+      # config.yaml, the profile cache and the fake-IP store all live here, so
+      # replacing the container loses nothing.
+      - ./data:/data
+
+    environment:
+      # Set CLASH_HOME to move the data directory; it must match the volume above.
+      - CLASH_HOME=/data
+      - TZ=Asia/Shanghai
+
+    # The control API is exposed on 9090 and the starter configuration leaves
+    # `secret` empty, so anything that can reach that port can reconfigure the
+    # core. On a shared or untrusted network, set a secret in data/config.yaml
+    # and put the same value in the dashboard's settings.
+    #
+    # healthcheck: the image has no curl or wget, so the probe uses the runtime
+    # the container already carries.
+    healthcheck:
+      test:
+        - CMD
+        - /bin/sh
+        - -c
+        - "exec 3<>/dev/tcp/127.0.0.1/9090 && printf 'GET /version HTTP/1.0\\r\\n\\r\\n' >&3 && head -1 <&3 | grep -q 200"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s

@@ -1,0 +1,28 @@
+# Order matters: a later pattern overrides an earlier one, so every exclusion
+# comes after any re-inclusion and nothing here re-includes a build output.
+
+# Local state and build outputs, none of which the image build reads.
+**/bin
+**/obj
+**/node_modules
+**/artifacts
+**/.vs
+**/.vscode
+**/*.user
+**/TestResults
+
+# Not needed to build the image.
+.git
+.gitignore
+.github
+docs
+tests
+scripts
+third_party
+
+# The tray shell targets net10.0-windows and is not part of this image.
+src/Clash.Desktop
+
+# Only the root markdown is excluded; no directory above is excluded wholesale,
+# so nothing under web/ or docker/ is affected.
+*.md

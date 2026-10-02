@@ -38,6 +38,9 @@ On first run a working starter configuration is written to
 a usable rule set and no nodes. Add nodes by importing a subscription from the
 **Profiles** page, or by editing `proxies:` directly.
 
+To run the headless core in a container instead, see [Docker](#docker-headless) —
+it is a single `docker compose up -d`.
+
 ### Desktop tray app
 
 ```powershell
@@ -107,6 +110,83 @@ and quic-go — which every hysteria2/tuic server uses — do not interoperate o
 this build, independent of this project's adapter code. hysteria2's UDP and
 Salamander obfuscation are additionally out of reach because `System.Net.Quic`
 exposes no QUIC datagrams and no raw socket underneath.
+
+---
+
+## Docker (headless)
+
+The image carries the core and the dashboard; only the Windows tray shell is left
+out (it targets `net10.0-windows` and cannot build on Linux, so **TUN mode is not
+available in this image**).
+
+### Deploy
+
+```sh
+docker compose up -d
+```
+
+That is the whole deployment. The container writes a starter configuration to its
+data volume on first run, so the dashboard is live immediately:
+
+| what | where |
+|---|---|
+| Dashboard | <http://127.0.0.1:9090/ui> |
+| Control API | `http://127.0.0.1:9090` |
+| HTTP + SOCKS5 proxy | `127.0.0.1:7890` |
+| DNS | `127.0.0.1:1053` |
+| Configuration and cache | `./data` on the host (`docker compose` creates it) |
+
+The first thing to do is open the dashboard and import a subscription, or edit
+`./data/config.yaml` and run `docker compose restart`.
+
+To build from a local checkout instead of the published image, comment out
+`image:` in `docker-compose.yml` and uncomment `build: .`, then use
+`docker compose up -d --build`.
+
+### Upgrade
+
+```sh
+# Linux / macOS / WSL
+./scripts/docker-update.sh
+
+# Windows
+powershell -File scripts/docker-update.ps1
+```
+
+Either script pulls the new image, recreates the container against the same data
+volume, prunes the image it replaced, and then waits for the core to answer and
+prints the version it ended up running. Add `-Build` (PowerShell) or `--build`
+(sh) to rebuild from the checkout instead of pulling.
+
+The equivalent by hand:
+
+```sh
+docker compose pull
+docker compose up -d
+```
+
+Upgrading never touches `./data`, so profiles, the configuration and the fake-IP
+store survive. The image is published to
+`ghcr.io/xcool-603/clash-dotnet` by
+[.github/workflows/docker.yml](.github/workflows/docker.yml) on every push to
+`main` and on every `v*` tag; that workflow also runs the image and checks that
+`/version` answers, so a Dockerfile that no longer works fails there rather than
+on your machine.
+
+### Before exposing it
+
+The starter configuration leaves the control API on `0.0.0.0:9090` with an empty
+`secret`, because a loopback listener inside a container is unreachable from the
+host. On a machine reachable by others, set a `secret` in `data/config.yaml` and
+the same value in the dashboard's settings — otherwise anything that can reach
+port 9090 can reconfigure the core. Publishing the ports only on the loopback
+interface is the other half of that:
+
+```yaml
+ports:
+  - "127.0.0.1:9090:9090/tcp"
+  - "127.0.0.1:7890:7890/tcp"
+```
 
 ---
 
@@ -284,7 +364,9 @@ src/Clash.Desktop/    Windows tray shell hosting the same host in-process
 tests/Clash.Tests/    xunit
 web/                  Vue 3 + Vite + TypeScript dashboard
 docs/                 architecture and API/UX reference
-scripts/              smoke test and helpers
+scripts/              smoke test, interop harness and the container upgrade scripts
+docker/               the container's starter configuration and entrypoint
+third_party/wintun/   the prebuilt TUN driver, with its licence and provenance
 ```
 
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the design and the

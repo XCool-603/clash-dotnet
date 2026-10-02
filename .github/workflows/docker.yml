@@ -1,0 +1,106 @@
+name: docker
+
+# Publishes the image that docker-compose.yml pulls, which is what makes the
+# documented upgrade a one-liner. Building and running it here also means a
+# Dockerfile that no longer works fails in CI rather than on a user's machine.
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    paths:
+      - Dockerfile
+      - .dockerignore
+      - docker-compose.yml
+      - docker/**
+      - .github/workflows/docker.yml
+  workflow_dispatch:
+
+concurrency:
+  group: docker-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      # Built into the local daemon first so the smoke test below can run the
+      # real image. `load` and `push` are mutually exclusive in one buildx
+      # invocation, so the push is a second step that hits the same cache.
+      - name: Build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: clash-dotnet:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Proves the image starts and answers rather than only that it built. The
+      # core reports its version without needing any nodes configured.
+      - name: Smoke-test the image
+        run: |
+          set -eux
+          mkdir -p "$RUNNER_TEMP/clash-data"
+          docker run --rm -d --name clash-ci \
+            -p 9090:9090 \
+            -v "$RUNNER_TEMP/clash-data:/data" \
+            clash-dotnet:ci
+
+          for _ in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:9090/version; then
+              echo 'the image answered /version'
+              docker exec clash-ci cat /data/config.yaml | head -20
+              docker rm -f clash-ci
+              exit 0
+            fi
+            sleep 1
+          done
+
+          echo '::error::the image never answered /version'
+          docker logs clash-ci || true
+          docker rm -f clash-ci
+          exit 1
+
+      - name: Log in to the registry
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Derive tags and labels
+        if: github.event_name != 'pull_request'
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=ref,event=tag
+            type=sha,format=short
+
+      - name: Push
+        if: github.event_name != 'pull_request'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha

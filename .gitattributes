@@ -1,0 +1,36 @@
+# Line endings are part of correctness for some of these files, so they are
+# pinned rather than left to core.autocrlf.
+#
+# A shell script with a CRLF shebang is unrunnable on Linux ("bad interpreter"),
+# and a Dockerfile whose line continuation ends in CRLF breaks the instruction —
+# both only show up inside the container, where they are expensive to diagnose.
+
+*.sh                text eol=lf
+Dockerfile          text eol=lf
+.dockerignore       text eol=lf
+docker-compose.yml  text eol=lf
+docker/**           text eol=lf
+
+# PowerShell is a Windows tool; CRLF is what its tooling expects.
+*.ps1               text eol=crlf
+*.psm1              text eol=crlf
+
+# Source files: normalise to LF so a Windows checkout and a Linux build agree.
+*.cs                text eol=lf
+*.csproj            text eol=lf
+*.slnx              text eol=lf
+*.props             text eol=lf
+*.ts                text eol=lf
+*.vue               text eol=lf
+*.json              text eol=lf
+*.yml               text eol=lf
+*.yaml              text eol=lf
+*.md                text eol=lf
+
+# Never touch binaries: a line-ending conversion would corrupt them.
+*.mrs               binary
+*.dll               binary
+*.exe               binary
+*.png               binary
+*.ico               binary
+*.svg               text eol=lf

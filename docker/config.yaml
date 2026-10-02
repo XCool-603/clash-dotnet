@@ -1,0 +1,83 @@
+# Clash for .NET — container starter configuration
+#
+# Written to /data/config.yaml by the entrypoint on first run, and never
+# overwritten afterwards. Edit it there (or import a subscription from the
+# dashboard) to add nodes.
+#
+# Two lines differ from the desktop starter config, and both are required by the
+# container boundary:
+#   - external-controller is 0.0.0.0 rather than 127.0.0.1, because a loopback
+#     listener inside the container is unreachable from the host;
+#   - allow-lan is true, because the proxy port is likewise reached from outside.
+#
+# That also means the control API is reachable from anywhere that can reach
+# port 9090. Set a secret below if the host is not trusted.
+
+mixed-port: 7890
+allow-lan: true
+bind-address: '*'
+mode: rule
+log-level: info
+ipv6: false
+external-controller: 0.0.0.0:9090
+secret: ''
+unified-delay: true
+tcp-concurrent: true
+find-process-mode: strict
+global-client-fingerprint: chrome
+
+profile:
+  store-selected: true
+  store-fake-ip: true
+
+dns:
+  enable: true
+  listen: 0.0.0.0:1053
+  ipv6: false
+  enhanced-mode: fake-ip
+  fake-ip-range: 198.18.0.1/16
+  fake-ip-filter:
+    - '*.lan'
+    - '*.local'
+    - '+.msftconnecttest.com'
+    - '+.msftncsi.com'
+    - localhost.ptlogin2.qq.com
+  default-nameserver:
+    - 223.5.5.5
+    - 119.29.29.29
+  nameserver:
+    - https://doh.pub/dns-query
+    - https://dns.alidns.com/dns-query
+  fallback:
+    - https://dns.google/dns-query
+    - https://1.1.1.1/dns-query
+  fallback-filter:
+    geoip: true
+    geoip-code: CN
+    ipcidr:
+      - 240.0.0.0/4
+
+# Add your nodes here, or import a subscription from the Profiles page.
+proxies: []
+
+proxy-groups:
+  - name: PROXY
+    type: select
+    proxies:
+      - DIRECT
+  - name: AUTO
+    type: url-test
+    proxies:
+      - DIRECT
+    url: https://www.gstatic.com/generate_204
+    interval: 300
+    tolerance: 50
+
+rules:
+  - DOMAIN-SUFFIX,local,DIRECT
+  - IP-CIDR,127.0.0.0/8,DIRECT,no-resolve
+  - IP-CIDR,192.168.0.0/16,DIRECT,no-resolve
+  - IP-CIDR,10.0.0.0/8,DIRECT,no-resolve
+  - IP-CIDR,172.16.0.0/12,DIRECT,no-resolve
+  - GEOIP,CN,DIRECT
+  - MATCH,PROXY
