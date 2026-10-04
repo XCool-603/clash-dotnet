@@ -83,7 +83,9 @@ try {
   await send('Page.enable')
   await send('Runtime.enable')
   await send('Page.navigate', { url })
-  await sleep(5000)
+  // Long enough for the traffic stream to deliver several samples, so the
+  // assertions below see drawn data rather than an empty plot.
+  await sleep(9000)
 
   const report = await evaluate(`(() => {
     const q = (s) => document.querySelector(s)
@@ -93,7 +95,15 @@ try {
       modeSwitcher: !!q('.mode-switcher'),
       trafficChart: !!q('.traffic-chart'),
       memoryChart: !!q('.memory-chart'),
-      chartCanvas: document.querySelectorAll('canvas').length,
+      chartPaths: document.querySelectorAll('.line-chart__svg path').length,
+      axisLabels: document.querySelectorAll('.line-chart__axis').length,
+      // Each sample contributes one 'C' segment to the smoothed path.
+      drawnSegments: Math.max(
+        0,
+        ...[...document.querySelectorAll('.line-chart__svg path')].map(
+          (p) => ((p.getAttribute('d') || '').match(/C/g) || []).length,
+        ),
+      ),
       // A styled button proves the on-demand Element Plus stylesheets arrived.
       styledButton: (() => {
         const b = q('.el-button')
@@ -107,11 +117,18 @@ try {
   })()`)
 
   const result = JSON.parse(report)
+  // Only the dashboard has charts; the other routes are checked for the shell,
+  // the Element Plus styling and a clean console.
+  const isDashboard = url.includes('#/') && !url.includes('#/p') && !url.includes('#/c') && !url.includes('#/r') && !url.includes('#/l') && !url.includes('#/s')
   const problems = []
   if (result.nav < 7) problems.push('only ' + result.nav + ' nav items')
-  if (!result.trafficChart) problems.push('the traffic chart did not render')
-  if (!result.memoryChart) problems.push('the memory chart did not render')
-  if (result.chartCanvas < 1) problems.push('no chart canvas')
+  if (isDashboard) {
+    if (!result.trafficChart) problems.push('the traffic chart did not render')
+    if (!result.memoryChart) problems.push('the memory chart did not render')
+    if (result.chartPaths < 2) problems.push('the chart series did not draw (' + result.chartPaths + ' paths)')
+    if (result.axisLabels < 4) problems.push('the chart axes have no labels (' + result.axisLabels + ')')
+    if (result.drawnSegments < 2) problems.push('the chart lines have no data (' + result.drawnSegments + ' segments)')
+  }
   if (result.styledButton !== 'styled') problems.push('Element Plus styling missing (' + result.styledButton + ')')
   if (consoleErrors.length) problems.push(consoleErrors.length + ' console error(s)')
 

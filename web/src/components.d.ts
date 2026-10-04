@@ -39,6 +39,7 @@ declare module 'vue' {
     ElTooltip: typeof import('element-plus/es/components/tooltip/index')['ElTooltip']
     EmptyState: typeof import('./components/EmptyState.vue')['default']
     ErrorState: typeof import('./components/ErrorState.vue')['default']
+    LineChartSvg: typeof import('./components/charts/LineChartSvg.vue')['default']
     MemoryChart: typeof import('./components/charts/MemoryChart.vue')['default']
     ModeSwitcher: typeof import('./components/ModeSwitcher.vue')['default']
     NodeIcon: typeof import('./components/NodeIcon.vue')['default']
