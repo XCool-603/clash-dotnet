@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { ArrowDown, Loading, Refresh, Search } from '@element-plus/icons-vue'
-import { ElMessage } from 'element-plus'
 
 import DelayBadge from '@/components/DelayBadge.vue'
 import EmptyState from '@/components/EmptyState.vue'

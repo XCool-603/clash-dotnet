@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, defineAsyncComponent, onMounted, ref } from 'vue'
 import {
   Cpu,
   Delete,
@@ -9,10 +9,16 @@ import {
   SwitchButton,
   Upload,
 } from '@element-plus/icons-vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
 
-import MemoryChart from '@/components/charts/MemoryChart.vue'
-import TrafficChart from '@/components/charts/TrafficChart.vue'
+// Loaded after the first paint.
+//
+// The charts are the only thing in the dashboard that needs ECharts, which is
+// by far the largest dependency in the bundle and sits below the stat cards
+// rather than beside them. Importing them statically made every visit wait for
+// the charting library before rendering anything at all; this way the cards and
+// the mode switcher appear first and the charts fill in a moment later.
+const MemoryChart = defineAsyncComponent(() => import('@/components/charts/MemoryChart.vue'))
+const TrafficChart = defineAsyncComponent(() => import('@/components/charts/TrafficChart.vue'))
 import EmptyState from '@/components/EmptyState.vue'
 import ErrorState from '@/components/ErrorState.vue'
 import ModeSwitcher from '@/components/ModeSwitcher.vue'

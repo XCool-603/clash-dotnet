@@ -15,7 +15,6 @@ import {
   Setting,
   Sunny,
 } from '@element-plus/icons-vue'
-import { ElMessage } from 'element-plus'
 
 import ModeSwitcher from '@/components/ModeSwitcher.vue'
 import StatusPill from '@/components/StatusPill.vue'

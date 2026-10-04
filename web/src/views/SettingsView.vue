@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { Check, Delete, Moon, Refresh, Sunny, SwitchButton } from '@element-plus/icons-vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
 
 import ErrorState from '@/components/ErrorState.vue'
 import StatusPill from '@/components/StatusPill.vue'
