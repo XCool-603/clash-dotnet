@@ -11,6 +11,7 @@
     <BuiltInComInteropSupport>true</BuiltInComInteropSupport>
   </PropertyGroup>
 
+
   <ItemGroup>
     <ProjectReference Include="..\Clash.Server\Clash.Server.csproj" />
   </ItemGroup>
@@ -32,10 +33,17 @@
     so wintun.dll and the vendor notice it must travel with belong beside it.
   -->
   <ItemGroup>
+    <!--
+      ExcludeFromSingleFile: the single-file bundler collects every .dll in the
+      publish output, which would fold this one into the executable. It has to
+      stay a real file beside it — it is a native library loaded by name at run
+      time, and the TUN code reports a missing file by that path.
+    -->
     <None Include="..\..\third_party\wintun\amd64\wintun.dll"
           Link="wintun.dll"
           CopyToOutputDirectory="PreserveNewest"
           CopyToPublishDirectory="PreserveNewest"
+          ExcludeFromSingleFile="true"
           Visible="false" />
     <None Include="..\..\third_party\wintun\LICENSE.txt"
           Link="wintun-LICENSE.txt"

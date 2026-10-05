@@ -14,6 +14,7 @@
     <PackageReference Include="YamlDotNet" Version="16.3.0" />
   </ItemGroup>
 
+
   <ItemGroup>
     <ProjectReference Include="..\Clash.Core\Clash.Core.csproj" />
   </ItemGroup>
@@ -34,6 +35,20 @@
     produce the container's payload, and the DLL must not be dragged into it.
     The container build runs on Linux and excludes third_party from its context,
     so an unconditional copy fails that publish outright.
+
+    Two publish settings were measured and rejected; both are recorded here so
+    they are not re-attempted:
+
+      PublishTrimmed=true   119 MB -> 47 MB, but the app does not start:
+                            ASP.NET Core's controller discovery loses what it
+                            reflects over and MapControllers throws.
+      PublishSingleFile    119 MB/449 files -> 54 MB/36 files, at the cost of
+      + compression         private bytes 24 MB -> 90 MB. The decompressed
+                            bundle is held in memory for the process's life,
+                            which is a bad trade for something that runs all day.
+
+    ExcludeFromSingleFile therefore stays: it is what keeps this DLL a real file
+    if anyone does publish single-file by hand.
   -->
   <PropertyGroup>
     <IncludeWintun Condition="'$(RuntimeIdentifier)' != ''"
@@ -47,6 +62,7 @@
           Link="wintun.dll"
           CopyToOutputDirectory="PreserveNewest"
           CopyToPublishDirectory="PreserveNewest"
+          ExcludeFromSingleFile="true"
           Visible="false" />
     <None Include="..\..\third_party\wintun\LICENSE.txt"
           Link="wintun-LICENSE.txt"
