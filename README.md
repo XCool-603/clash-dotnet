@@ -50,6 +50,33 @@ dotnet run --project src/Clash.Desktop
 Hosts the same core in-process and adds a tray icon, system-proxy integration,
 autostart and single-instance handling.
 
+### Release build
+
+```powershell
+powershell -File scripts/build.ps1 -Configuration Release -Publish
+```
+
+Produces **one folder**, `artifacts/win-x64`, which is the whole application:
+
+| | |
+|---|---|
+| `Clash.Desktop.exe` | the tray client |
+| `Clash.Server.exe` | the same core headless, for running without a tray |
+| `wintun.dll` | the TUN driver, loaded at run time (see `third_party/wintun`) |
+| `wwwroot/` | the dashboard |
+
+Both executables live in one folder on purpose. The tray hosts the server
+in-process, so publishing it already pulls in `Clash.Server.exe` and the whole
+.NET runtime; a separate headless folder was 115 MB of duplicated runtime. The
+script checks that both executables, the driver and the dashboard are present
+before calling the folder a release.
+
+It is self-contained: no .NET installation is required on the target machine.
+Note that TUN mode needs an elevated process, and that the two executables are
+not fully interchangeable — five framework assemblies differ between the Windows
+Desktop and ASP.NET runtime packs — so run each from this folder rather than
+mixing them with another build.
+
 ### Smoke test
 
 ```powershell
