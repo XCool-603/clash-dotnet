@@ -68,9 +68,6 @@ internal static class WintunInterop
     public static extern bool WintunDeleteDriver();
 
     [DllImport(Library, SetLastError = true, ExactSpelling = true)]
-    public static extern void WintunGetAdapterLuid(IntPtr adapter, out ulong luid);
-
-    [DllImport(Library, SetLastError = true, ExactSpelling = true)]
     public static extern uint WintunGetRunningDriverVersion();
 
     [DllImport(Library, SetLastError = true, ExactSpelling = true)]
