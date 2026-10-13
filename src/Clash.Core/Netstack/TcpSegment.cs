@@ -222,8 +222,16 @@ public readonly struct TcpSegment
 
     /// <summary>
     /// True when the segment's stored checksum matches its contents and the
-    /// pseudo-header. A checksum that folds to zero is rejected: the stack never
-    /// emits one, and treating it as valid would let a corrupt segment through.
+    /// pseudo-header.
+    /// <para>
+    /// The test is <c>Fold(whole segment) == 0xFFFF</c>, so a segment whose sum
+    /// folds to <c>0x0000</c> is rejected: the stack never emits one, and treating
+    /// it as valid would let a corrupt segment through. A peer that stores
+    /// <c>0x0000</c> while its contents fold to <c>0xFFFF</c> is accepted, which is
+    /// correct rather than a hole — in one's complement arithmetic zero has two
+    /// representations, so <c>0x0000</c> is the right field value in exactly that
+    /// case.
+    /// </para>
     /// </summary>
     /// <param name="segment">The complete TCP segment, header and payload.</param>
     /// <param name="source">Source address as a numeric dotted-quad value.</param>

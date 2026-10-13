@@ -131,6 +131,25 @@ public sealed class ClashRuntime : IAsyncDisposable
 
         // 2. Components --------------------------------------------------------
         var dns = Components.CreateDns(config, options.LoggerFactory);
+
+        // Before anything binds, check whether the configured fake-ip range is
+        // already claimed by this host.
+        //
+        // This is not a theoretical guard. A machine running another Clash-family
+        // client has its TUN holding 198.18.0.0/15, which is where the default
+        // fake-ip-range lives; the core then hands out addresses inside that
+        // range, the OS routes them into the other client's tunnel, and every
+        // proxied request times out with nothing in the log to explain it. The
+        // check only warns — a false positive must never stop a core from
+        // starting.
+        if (config.Dns.Enable && IsFakeIpMode(config.Dns.EnhancedMode))
+        {
+            FakeIpRangeGuard.LogConflicts(
+                config.Dns.FakeIpRange,
+                config.Dns.FakeIpRangeV6,
+                logger);
+        }
+
         var geo = Components.CreateGeo(config, options.LoggerFactory);
         try
         {
@@ -288,6 +307,17 @@ public sealed class ClashRuntime : IAsyncDisposable
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Whether the configuration asks for fake-ip answers.
+    /// <para>
+    /// <see cref="Dns.DnsResolver"/> makes the same comparison privately. They
+    /// have to agree, so both are written the same way; this one only decides
+    /// whether the conflict check is worth running at all.
+    /// </para>
+    /// </summary>
+    private static bool IsFakeIpMode(string? enhancedMode)
+        => string.Equals(enhancedMode, "fake-ip", StringComparison.OrdinalIgnoreCase);
 
     private static HashSet<int> Ports(ClashConfig config)
         => [config.Port, config.SocksPort, config.MixedPort, config.RedirPort, config.TProxyPort];

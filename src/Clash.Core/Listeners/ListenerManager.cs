@@ -1,4 +1,5 @@
 using Clash.Core.Configuration;
+using Clash.Core.Tun;
 using Clash.Core.Tunnel;
 using Microsoft.Extensions.Logging;
 
@@ -148,6 +149,16 @@ public sealed class ListenerManager : IAsyncDisposable
             listeners.Add(new TProxyListener(config, _logger));
         }
 
+        // TUN mode is switched on by `tun.enable`, not by a port. Nothing at all is
+        // constructed while it is off — not even a listener object — so a default
+        // configuration never reaches the Wintun driver.
+        var tunRequested = false;
+        if (config.Tun?.Enable == true)
+        {
+            tunRequested = true;
+            listeners.Add(new TunListener(config, _logger));
+        }
+
         foreach (var entry in config.Listeners)
         {
             var type = entry.Type?.Trim().ToLowerInvariant() ?? string.Empty;
@@ -170,9 +181,16 @@ public sealed class ListenerManager : IAsyncDisposable
                 case "tproxy":
                     listeners.Add(new TProxyListener(config, _logger, port, name, host));
                     break;
-                case "tun":
+                case "tun" when tunRequested:
+                    // One adapter per process: the entry names the listener in the
+                    // API, it does not ask for a second session.
                     _logger.LogInformation(
-                        "listener [{Name}] of type tun is owned by the TUN subsystem and was skipped",
+                        "listener [{Name}] of type tun is served by the tun inbound enabled in the tun section",
+                        name ?? "tun");
+                    break;
+                case "tun":
+                    _logger.LogWarning(
+                        "listener [{Name}] of type tun was skipped: tun mode is off (set tun.enable to true)",
                         name ?? "tun");
                     break;
                 default:

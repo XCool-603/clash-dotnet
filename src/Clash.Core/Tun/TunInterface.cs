@@ -131,10 +131,28 @@ internal static class TunInterface
 
     private static void Run(string arguments)
     {
-        if (!TryRun(arguments)) throw new ClashException($"netsh {arguments} failed");
+        if (!TryRun(arguments, out var reason))
+        {
+            throw new ClashException($"netsh {arguments} failed: {reason}");
+        }
     }
 
-    private static bool TryRun(string arguments)
+    private static bool TryRun(string arguments) => TryRun(arguments, out _);
+
+    /// <summary>
+    /// Runs one netsh command.
+    /// <para>
+    /// Both streams are drained while the process runs, and the text is kept
+    /// rather than dropped. netsh writes its complaint to stderr, and a redirected
+    /// pipe that nobody reads fills up and blocks the child — which would turn a
+    /// one-line failure into a stall against the timeout below. The text matters
+    /// because "netsh ... failed" on its own says nothing about which interface or
+    /// route was wrong.
+    /// </para>
+    /// </summary>
+    /// <param name="arguments">The netsh arguments.</param>
+    /// <param name="reason">What netsh said, for the caller's error message.</param>
+    private static bool TryRun(string arguments, out string reason)
     {
         using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
         {
@@ -146,8 +164,37 @@ internal static class TunInterface
             RedirectStandardError = true,
         });
 
-        if (process is null) return false;
-        process.WaitForExit(15_000);
-        return process.HasExited && process.ExitCode == 0;
+        if (process is null)
+        {
+            reason = "the netsh process could not be started";
+            return false;
+        }
+
+        var errorTask = process.StandardError.ReadToEndAsync();
+        var outputTask = process.StandardOutput.ReadToEndAsync();
+
+        if (!process.WaitForExit(15_000))
+        {
+            // Left running it would leak a process per failed call, and the caller
+            // is about to report a failure either way.
+            try
+            {
+                process.Kill(entireProcessTree: true);
+            }
+            catch (Exception)
+            {
+                // It exited between the check and the kill.
+            }
+
+            reason = "netsh did not exit within 15 s";
+            return false;
+        }
+
+        var error = errorTask.GetAwaiter().GetResult().Trim();
+        var output = outputTask.GetAwaiter().GetResult().Trim();
+
+        reason = error.Length > 0 ? error : output;
+        if (reason.Length == 0) reason = $"exit code {process.ExitCode}";
+        return process.ExitCode == 0;
     }
 }
