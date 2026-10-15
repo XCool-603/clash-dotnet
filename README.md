@@ -77,6 +77,32 @@ not fully interchangeable — five framework assemblies differ between the Windo
 Desktop and ASP.NET runtime packs — so run each from this folder rather than
 mixing them with another build.
 
+### Automatic releases
+
+Pushing a `v*` tag builds the same folder on a GitHub runner and publishes it as
+`clash-dotnet-<version>.zip` on the release:
+
+```powershell
+git tag v1.2.3
+git push origin v1.2.3
+```
+
+The workflow builds the dashboard first — `wwwroot/` is a build output and is
+git-ignored, so skipping it would publish a folder whose `/ui` answers 404 — then
+runs `scripts/build.ps1 -Publish`, which refuses to call the folder a release
+until both executables, `wintun.dll` and the dashboard are present. A tag whose
+name contains a `-` (a pre-release) is marked as such.
+
+`workflow_dispatch` produces the same artifact without a tag, which is the way to
+check that a change still packages before you tag anything. The workflow lives at
+`.github/workflows/release.yml`; the image publish is separate, in
+`.github/workflows/docker.yml`.
+
+The archive has been unpacked and run on a clean directory before being called a
+release: the tray starts, `/ui` answers 200 and traffic proxies. That matters
+because a folder can look complete and still be missing `wwwroot/index.html`,
+which only shows up as a 404 on `/ui` once someone else opens it.
+
 ### Smoke test
 
 ```powershell

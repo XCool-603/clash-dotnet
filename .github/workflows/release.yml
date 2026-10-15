@@ -1,0 +1,109 @@
+name: release
+
+# Publishes the Windows folder that ships to users, so a release is a tag push
+# rather than something assembled on one machine. The build itself is
+# scripts/build.ps1 -Publish, which refuses to call a folder a release until both
+# executables, wintun.dll and the dashboard are present — that same gate runs
+# here, so a broken publish fails in CI rather than on a user's machine.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Tag-less build; the artifact is named after this string'
+        required: false
+        default: 'dev'
+
+# A tag that is force-pushed twice should not leave two releases racing to
+# publish the same name; the newer run wins and the older one stops.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+
+    permissions:
+      contents: write # creating the release and uploading its asset
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # The dashboard lives in src/Clash.Server/wwwroot, which is git-ignored: it
+      # is a build output. Skipping the frontend here would publish a folder whose
+      # /ui answers 404, so it is built first.
+      - name: Build the dashboard
+        shell: pwsh
+        run: scripts/build.ps1 -Configuration Release -SkipTests
+
+      - name: Publish the release folder
+        shell: pwsh
+        run: scripts/build.ps1 -Configuration Release -SkipFrontend -SkipTests -Publish
+
+      # Packaged by scripts/pack-release.ps1 rather than Compress-Archive: that
+      # script fixes entry timestamps and sorts paths, so packing the same folder
+      # twice gives the same SHA256 — a checksum that changes every run is
+      # worthless for verifying a download. It also writes the .sha256 and the
+      # manifest the portal reads, and it refuses to pack a folder that is missing
+      # either executable, the driver or the dashboard.
+      #
+      # The zip is packed into the web root's downloads folder, which is where the
+      # portal serves it from; only that file and its checksum are uploaded here.
+      - name: Package
+        shell: pwsh
+        run: |
+          scripts/pack-release.ps1
+          $asset = 'src/Clash.Server/wwwroot/downloads/clash-dotnet-win-x64.zip'
+
+          # A manual run has no tag, so the ref name would be the branch. The
+          # declared input exists for that case and is otherwise unused.
+          $label = '${{ github.ref_name }}'
+          if ('${{ github.event_name }}' -eq 'workflow_dispatch') {
+            $label = '${{ github.event.inputs.version }}'
+          }
+          $name = "clash-dotnet-$label.zip"
+
+          Copy-Item -LiteralPath $asset -Destination $name
+          Copy-Item -LiteralPath "$asset.sha256" -Destination "$name.sha256"
+          "ASSET=$name" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "TITLE=$name" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      # Uploaded even when the ref is not a tag, so a manual run still leaves the
+      # folder behind instead of disappearing with the runner.
+      - name: Upload the artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.TITLE }}
+          path: |
+            ${{ env.ASSET }}
+            ${{ env.ASSET }}.sha256
+          if-no-files-found: error
+
+      - name: Create the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ${{ env.ASSET }}
+            ${{ env.ASSET }}.sha256
+          name: ${{ github.ref_name }}
+          # Written by hand in the release notes rather than generated from the
+          # commit list: the changelog needs to say what a user should do, not
+          # what the diff looked like.
+          generate_release_notes: false
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
